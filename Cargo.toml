@@ -16,6 +16,8 @@ categories = [
 ]
 keywords = ["disk-usage", "treemap", "egui", "dirstat", "zero-copy"]
 
+exclude = ["docs/videos/*", "*.mp4"]
+
 [dependencies]
 arc-swap = "1.9.1"
 bytemuck = { version = "1.25.0", features = ["derive"] }
