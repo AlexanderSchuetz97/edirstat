@@ -349,6 +349,10 @@ impl eframe::App for GuiApp {
                         });
                         ui.menu_button("View", |ui| {
                             ui.checkbox(&mut self.monospace_paths, "🅰 Monospace Paths");
+                            if ui.button("📃 Collapse All").clicked() {
+                                self.expanded_nodes.clear();
+                                ui.close_kind(egui::UiKind::Menu);
+                            }
                         });
                         ui.menu_button("Help", |ui| {
                             if ui.button("ℹ About").clicked() {
