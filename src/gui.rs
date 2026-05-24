@@ -135,9 +135,11 @@ impl eframe::App for GuiApp {
         let snapshot = self.shared_state.current_snapshot.load();
         let is_scanning = self.shared_state.is_scanning.load(Ordering::SeqCst);
 
-        // Repaint continuously during scan to show live progress
+        // Repaint during scan to show live progress, or continuously while selected to drive the glow animation
         if is_scanning {
             ctx.request_repaint_after(Duration::from_millis(50));
+        } else if self.selected_node_idx.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(8)); // ~120fps smooth animation loop
         }
 
         // Apply dark, premium glassmorphism-inspired style
@@ -588,13 +590,32 @@ impl eframe::App for GuiApp {
                         }
 
                         if let Some(rect) = target_rect {
-                            let accent_purple = egui::Color32::from_rgb(139, 92, 246);
-                            let stroke = egui::Stroke::new(3.0, accent_purple); // Bold selection border
+                            let time = ui.input(|i| i.time);
+
+                            // A wave factor oscillating smoothly between 0.0 and 1.0 (approx. 1Hz frequency)
+                            let pulse = 0.5f64.mul_add((time * 6.0).sin(), 0.5);
+
+                            // 1. Draw Outer Expanding Glow (grows and fades)
+                            let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
+                            let glow_color = egui::Color32::from_rgb(139, 92, 246)
+                                .linear_multiply(glow_alpha as f32);
+                            let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
                             painter.rect(
                                 rect,
                                 0.0,
                                 egui::Color32::TRANSPARENT,
-                                stroke,
+                                egui::Stroke::new(glow_thickness, glow_color),
+                                egui::StrokeKind::Outside,
+                            );
+
+                            // 2. Draw Inner Sharp Contrast Core (stays crisp)
+                            let core_color = egui::Color32::from_rgb(196, 181, 253); // Soft pastel purple/violet
+                            let core_thickness = 1.0f32.mul_add(pulse as f32, 1.5);
+                            painter.rect(
+                                rect,
+                                0.0,
+                                egui::Color32::TRANSPARENT,
+                                egui::Stroke::new(core_thickness, core_color),
                                 egui::StrokeKind::Inside,
                             );
                         }
