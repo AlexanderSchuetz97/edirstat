@@ -1,4 +1,5 @@
 pub mod dir_composition;
+pub mod extension_boxplot;
 pub mod scatter_plot;
 pub mod size_distribution;
 pub mod treemap;

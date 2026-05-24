@@ -37,6 +37,7 @@ pub enum PlotType {
     SizeDistribution,
     AgeSizeScatter,
     DirComposition,
+    ExtensionBoxplot,
 }
 
 pub struct GuiApp {
@@ -56,6 +57,7 @@ pub struct GuiApp {
     // Analytics components
     scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
     dir_comp_chart: stats::dir_composition::DirCompositionChart,
+    boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart,
 
     // Modal states
     delete_confirm_checked: bool,
@@ -100,6 +102,7 @@ impl GuiApp {
             plot_type: PlotType::SizeDistribution,
             scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart::new(),
             dir_comp_chart: stats::dir_composition::DirCompositionChart::new(0),
+            boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart::new(),
             delete_confirm_checked: false,
             delete_node_idx: None,
             active_modal: None,
@@ -126,6 +129,7 @@ impl GuiApp {
         self.traversal_engine.stats().reset();
         self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::new();
         self.dir_comp_chart = stats::dir_composition::DirCompositionChart::new(0);
+        self.boxplot_chart = stats::extension_boxplot::ExtensionBoxplotChart::new();
         self.cached_blocks.clear();
         self.last_snapshot_ptr = 0;
         self.last_rect = egui::Rect::NOTHING;
@@ -456,6 +460,101 @@ impl GuiApp {
         plot.show(ui, |plot_ui| {
             for chart in stacked_charts {
                 plot_ui.bar_chart(chart);
+            }
+        });
+    }
+
+    fn render_boxplot_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
+        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr
+            || self.boxplot_chart.computed_spreads.is_empty();
+
+        if needs_rebuild {
+            self.boxplot_chart.compute(snapshot);
+            self.last_snapshot_ptr = snapshot_ptr;
+        }
+
+        if self.boxplot_chart.computed_spreads.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    "Not enough file data in any single extension category to generate box plots.",
+                );
+            });
+            return;
+        }
+
+        let spreads_count = self.boxplot_chart.computed_spreads.len();
+        let chart_ref = &self.boxplot_chart;
+
+        let x_formatter = move |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value.round() as usize;
+            if val < spreads_count {
+                format!(".{}", chart_ref.computed_spreads[val].0.clone())
+            } else {
+                String::new()
+            }
+        };
+
+        let y_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value;
+            if val < 0.0 {
+                return String::new();
+            }
+            let bytes = 10.0f64.powf(val);
+            if bytes >= 1.0 {
+                prettier_bytes::ByteFormatter::new()
+                    .format(bytes as u64)
+                    .to_string()
+            } else {
+                String::new()
+            }
+        };
+
+        let x_grid = move |_input: egui_plot::GridInput| {
+            let mut marks = vec![];
+            for i in 0..spreads_count {
+                #[allow(clippy::cast_precision_loss)]
+                let value = i as f64;
+
+                marks.push(GridMark {
+                    value,
+                    step_size: 1.0,
+                });
+            }
+            marks
+        };
+
+        let x_axes = vec![
+            AxisHints::new_x()
+                .label("Top Extensions (by file count)")
+                .formatter(x_formatter),
+        ];
+        let y_axes = vec![
+            AxisHints::new_y()
+                .label("File Size Distribution")
+                .formatter(y_formatter),
+        ];
+
+        let plot = Plot::new("boxplot_plot")
+            .height(ui.available_height() - 10.0)
+            .custom_x_axes(x_axes)
+            .custom_y_axes(y_axes)
+            .x_grid_spacer(x_grid)
+            .legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop))
+            .allow_zoom(false)
+            .allow_drag(false)
+            .allow_scroll(false);
+
+        plot.show(ui, |plot_ui| {
+            for (i, (ext, spread)) in self.boxplot_chart.computed_spreads.iter().enumerate() {
+                #[allow(clippy::cast_precision_loss)]
+                let index = i as f64;
+
+                let elem =
+                    egui_plot::BoxElem::new(index, spread.clone()).name(format!(".{ext} sizes"));
+                let box_plot = egui_plot::BoxPlot::new(ext.clone(), vec![elem])
+                    .color(colors::get_color_for_extension(ext));
+                plot_ui.box_plot(box_plot);
             }
         });
     }
@@ -1039,6 +1138,7 @@ impl eframe::App for GuiApp {
                                 PlotType::SizeDistribution => "📊 File Size Distribution",
                                 PlotType::AgeSizeScatter => "🌌 File Age vs. File Size",
                                 PlotType::DirComposition => "🍰 Directory Composition",
+                                PlotType::ExtensionBoxplot => "📦 File Sizes by Extension",
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
@@ -1055,6 +1155,11 @@ impl eframe::App for GuiApp {
                                     &mut self.plot_type,
                                     PlotType::DirComposition,
                                     "🍰 Directory Composition",
+                                );
+                                ui.selectable_value(
+                                    &mut self.plot_type,
+                                    PlotType::ExtensionBoxplot,
+                                    "📦 File Sizes by Extension",
                                 );
                             });
                     });
@@ -1074,6 +1179,9 @@ impl eframe::App for GuiApp {
                             }
                             PlotType::DirComposition => {
                                 self.render_dir_composition_plot(ui, &snapshot);
+                            }
+                            PlotType::ExtensionBoxplot => {
+                                self.render_boxplot_plot(ui, &snapshot);
                             }
                         }
                     }
