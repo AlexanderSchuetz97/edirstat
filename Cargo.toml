@@ -1,0 +1,30 @@
+[package]
+name = "edirstat"
+description = "A fast, cross-platform disk usage analyzer with work-stealing multithreading, zero-copy snapshots, and an interactive treemap GUI."
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+documentation = "https://docs.rs/edirstat"
+repository = "https://github.com/xangelix/edirstat"
+authors = ["Cody Wyatt Neiman (xangelix) <neiman@cody.to>"]
+categories = [
+    "gui",
+    "filesystem",
+    "visualization",
+    "concurrency",
+    "memory-management",
+]
+keywords = ["disk-usage", "treemap", "egui", "dirstat", "zero-copy"]
+
+[dependencies]
+arc-swap = "1.9.1"
+bytemuck = { version = "1.25.0", features = ["derive"] }
+crossbeam = "0.8.4"
+eframe = "0.34.2"
+globset = "0.4.18"
+memmap2 = "0.9.10"
+open = "5.3.5"
+prettier-bytes = "0.2.1"
+rfd = "0.17.2"
+smallvec = "1.15.1"
+thiserror = "2.0.18"
