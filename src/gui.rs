@@ -7,7 +7,7 @@ use std::{
 };
 
 use eframe::egui;
-use egui_plot::{AxisHints, GridMark, Plot};
+use egui_plot::{AxisHints, GridMark, Plot, PlotResponse, Points};
 use rfd::FileDialog;
 use smallvec::SmallVec;
 
@@ -16,7 +16,7 @@ use super::{
     colors,
     coordinator::SharedState,
     persistence::{load_snapshot, save_snapshot},
-    stats::StatsChart as _,
+    stats::{self, StatsChart as _},
     traversal::TraversalEngine,
 };
 
@@ -35,6 +35,7 @@ pub enum VisMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlotType {
     SizeDistribution,
+    AgeSizeScatter,
 }
 
 pub struct GuiApp {
@@ -51,6 +52,9 @@ pub struct GuiApp {
     vis_mode: VisMode,
     plot_type: PlotType,
 
+    // Analytics components
+    scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
+
     // Modal states
     delete_confirm_checked: bool,
     delete_node_idx: Option<u32>,
@@ -66,7 +70,7 @@ pub struct GuiApp {
     last_extension_update: Option<Instant>,
 
     // Layout caching fields
-    cached_blocks: Vec<crate::stats::treemap::TreemapBlock>,
+    cached_blocks: Vec<stats::treemap::TreemapBlock>,
     last_snapshot_ptr: usize,
     last_rect: egui::Rect,
 
@@ -92,6 +96,7 @@ impl GuiApp {
             monospace_paths: false,
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
+            scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart::new(),
             delete_confirm_checked: false,
             delete_node_idx: None,
             active_modal: None,
@@ -116,6 +121,7 @@ impl GuiApp {
         self.delete_node_idx = None;
         self.active_modal = None;
         self.traversal_engine.stats().reset();
+        self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::new();
         self.cached_blocks.clear();
         self.last_snapshot_ptr = 0;
         self.last_rect = egui::Rect::NOTHING;
@@ -152,7 +158,7 @@ impl GuiApp {
     }
 
     fn render_size_distribution_plot(ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        let mut chart_gen = crate::stats::size_distribution::SizeDistributionChart;
+        let mut chart_gen = stats::size_distribution::SizeDistributionChart;
         let bar_chart = chart_gen.compute(snapshot);
 
         let formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
@@ -203,6 +209,153 @@ impl GuiApp {
         plot.show(ui, |plot_ui| {
             plot_ui.bar_chart(bar_chart);
         });
+    }
+
+    fn render_scatter_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        use stats::StatsChart;
+
+        // Recompute parameters if snapshot boundary updates
+        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
+        if self.last_snapshot_ptr != snapshot_ptr || self.scatter_chart.top_files.is_empty() {
+            self.scatter_chart.compute(snapshot);
+            self.last_snapshot_ptr = snapshot_ptr;
+        }
+
+        if self.scatter_chart.top_files.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label("No file data available to plot.");
+            });
+            return;
+        }
+
+        let max_time = self.scatter_chart.max_timestamp;
+
+        // Populate log-scale coordinates [Age, Size]
+        let plot_points: Vec<[f64; 2]> = self
+            .scatter_chart
+            .top_files
+            .iter()
+            .map(|&(idx, size)| {
+                let node = &snapshot.nodes[idx as usize];
+
+                #[allow(clippy::cast_precision_loss)]
+                let age_days = if max_time > node.modified_timestamp {
+                    (max_time - node.modified_timestamp) as f64 / 86400.0
+                } else {
+                    0.0
+                };
+
+                #[allow(clippy::cast_precision_loss)]
+                let size_log = (size as f64).log10();
+
+                [age_days, size_log]
+            })
+            .collect();
+
+        // Format grid boundaries log10 values into pretty byte readouts
+        let y_formatter = |mark: egui_plot::GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value;
+            if val < 0.0 {
+                return String::new();
+            }
+            let bytes = 10.0f64.powf(val);
+            if bytes >= 1.0 {
+                prettier_bytes::ByteFormatter::new()
+                    .format(bytes as u64)
+                    .to_string()
+            } else {
+                String::new()
+            }
+        };
+
+        let x_axes = vec![AxisHints::new_x().label("File Age (Days unmodified)")];
+        let y_axes = vec![
+            AxisHints::new_y()
+                .label("File Size (Logarithmic)")
+                .formatter(y_formatter),
+        ];
+
+        let points = Points::new("Top 5,000 Space Hogs", plot_points)
+            .radius(2.0)
+            .color(crate::colors::COLOR_SCANNING);
+
+        let plot = Plot::new("age_size_scatter_plot")
+            .height(ui.available_height() - 10.0)
+            .custom_x_axes(x_axes)
+            .custom_y_axes(y_axes)
+            .show_background(true);
+
+        let PlotResponse {
+            inner: (pointer_coordinate, bounds),
+            ..
+        } = plot.show(ui, |plot_ui| {
+            plot_ui.points(points);
+            (plot_ui.pointer_coordinate(), plot_ui.plot_bounds())
+        });
+
+        // Hover coordinates check for rendering on-demand details
+        if let Some(coord) = pointer_coordinate {
+            let bounds_width = bounds.width();
+            let bounds_height = bounds.height();
+
+            if bounds_width > 0.0 && bounds_height > 0.0 {
+                let mut closest_node_idx = None;
+                let mut min_dist_sq = f64::INFINITY;
+
+                for &(idx, size) in &self.scatter_chart.top_files {
+                    let node = &snapshot.nodes[idx as usize];
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let age_days = if max_time > node.modified_timestamp {
+                        (max_time - node.modified_timestamp) as f64 / 86400.0
+                    } else {
+                        0.0
+                    };
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let size_log = (size as f64).log10();
+
+                    // Standardize aspect ratio coordinate scaling
+                    let dx = (coord.x - age_days) / bounds_width;
+                    let dy = (coord.y - size_log) / bounds_height;
+                    let dist_sq = dy.mul_add(dy, dx * dx);
+
+                    if dist_sq < min_dist_sq {
+                        min_dist_sq = dist_sq;
+                        closest_node_idx = Some(idx);
+                    }
+                }
+
+                // Tooltip displays if within visual vicinity (0.02 screen-radius bounds)
+                if min_dist_sq < 0.0004
+                    && let Some(node_idx) = closest_node_idx
+                {
+                    let node = &snapshot.nodes[node_idx as usize];
+                    let path_str = snapshot.get_full_path(node_idx);
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(node.size)
+                        .to_string();
+
+                    let age_days = if max_time > node.modified_timestamp {
+                        (max_time - node.modified_timestamp) / 86400
+                    } else {
+                        0
+                    };
+
+                    egui::Tooltip::always_open(
+                        ui.ctx().clone(),
+                        ui.layer_id(),
+                        egui::Id::new("scatter_tooltip"),
+                        egui::PopupAnchor::Pointer,
+                    )
+                    .show(|ui| {
+                        ui.label(format!("📄 Path: {path_str}"));
+                        ui.label(format!("💾 Size: {size_str}"));
+                        ui.label(format!("⏳ Age: {age_days} days unmodified"));
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -610,8 +763,8 @@ impl eframe::App for GuiApp {
                             || rect != self.last_rect;
 
                         if needs_rebuild {
-                            use crate::stats::StatsChart;
-                            let mut chart = crate::stats::treemap::TreemapChart::new(rect);
+                            use stats::StatsChart;
+                            let mut chart = stats::treemap::TreemapChart::new(rect);
                             self.cached_blocks = chart.compute(&snapshot);
                             self.last_snapshot_ptr = snapshot_ptr;
                             self.last_rect = rect;
@@ -693,7 +846,7 @@ impl eframe::App for GuiApp {
                             // exact unified rect of its visible children on-screen.
                             let mut target_rect: Option<egui::Rect> = None;
                             for block in &self.cached_blocks {
-                                if crate::stats::treemap::is_descendant(
+                                if stats::treemap::is_descendant(
                                     &snapshot.nodes,
                                     block.node_idx,
                                     selected_idx,
@@ -783,12 +936,18 @@ impl eframe::App for GuiApp {
                         egui::ComboBox::from_id_salt("plot_type_combo")
                             .selected_text(match self.plot_type {
                                 PlotType::SizeDistribution => "📊 File Size Distribution",
+                                PlotType::AgeSizeScatter => "🌌 File Age vs. File Size",
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut self.plot_type,
                                     PlotType::SizeDistribution,
                                     "📊 File Size Distribution",
+                                );
+                                ui.selectable_value(
+                                    &mut self.plot_type,
+                                    PlotType::AgeSizeScatter,
+                                    "🌌 File Age vs. File Size",
                                 );
                             });
                     });
@@ -802,6 +961,9 @@ impl eframe::App for GuiApp {
                         match self.plot_type {
                             PlotType::SizeDistribution => {
                                 Self::render_size_distribution_plot(ui, &snapshot);
+                            }
+                            PlotType::AgeSizeScatter => {
+                                self.render_scatter_plot(ui, &snapshot);
                             }
                         }
                     }

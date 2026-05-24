@@ -1,3 +1,4 @@
+pub mod scatter_plot;
 pub mod size_distribution;
 pub mod treemap;
 
