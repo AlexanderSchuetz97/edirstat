@@ -7,7 +7,7 @@ use std::{
 };
 
 use eframe::egui;
-use egui_plot::{AxisHints, GridMark, Plot, PlotResponse, Points};
+use egui_plot::{AxisHints, GridMark, Line, Plot, PlotResponse, Points};
 use rfd::FileDialog;
 use smallvec::SmallVec;
 
@@ -38,6 +38,7 @@ pub enum PlotType {
     AgeSizeScatter,
     DirComposition,
     ExtensionBoxplot,
+    TemporalTimeline,
 }
 
 pub struct GuiApp {
@@ -58,6 +59,7 @@ pub struct GuiApp {
     scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
     dir_comp_chart: stats::dir_composition::DirCompositionChart,
     boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart,
+    timeline_chart: stats::temporal_timeline::TemporalTimelineChart,
 
     // Modal states
     delete_confirm_checked: bool,
@@ -103,6 +105,7 @@ impl GuiApp {
             scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart::new(),
             dir_comp_chart: stats::dir_composition::DirCompositionChart::new(0),
             boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart::new(),
+            timeline_chart: stats::temporal_timeline::TemporalTimelineChart::new(),
             delete_confirm_checked: false,
             delete_node_idx: None,
             active_modal: None,
@@ -130,6 +133,7 @@ impl GuiApp {
         self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::new();
         self.dir_comp_chart = stats::dir_composition::DirCompositionChart::new(0);
         self.boxplot_chart = stats::extension_boxplot::ExtensionBoxplotChart::new();
+        self.timeline_chart = stats::temporal_timeline::TemporalTimelineChart::new();
         self.cached_blocks.clear();
         self.last_snapshot_ptr = 0;
         self.last_rect = egui::Rect::NOTHING;
@@ -556,6 +560,117 @@ impl GuiApp {
                     .color(colors::get_color_for_extension(ext));
                 plot_ui.box_plot(box_plot);
             }
+        });
+    }
+
+    fn render_timeline_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
+        let needs_rebuild =
+            self.last_snapshot_ptr != snapshot_ptr || self.timeline_chart.sorted_days.is_empty();
+
+        if needs_rebuild {
+            self.timeline_chart.compute(snapshot);
+            self.last_snapshot_ptr = snapshot_ptr;
+        }
+
+        if self.timeline_chart.sorted_days.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label("No file modification metadata available to construct timelines.");
+            });
+            return;
+        }
+
+        // Build Space Points (cumulative) and Activity Points (daily frequency)
+        let mut space_points = Vec::new();
+        let mut activity_points = Vec::new();
+
+        let mut cumulative_size = 0u64;
+        for &day in &self.timeline_chart.sorted_days {
+            let (size, count) = self.timeline_chart.daily_totals[&day];
+            cumulative_size += size;
+
+            #[allow(clippy::cast_precision_loss)]
+            let d = day as f64;
+            #[allow(clippy::cast_precision_loss)]
+            let count_d = count as f64;
+            #[allow(clippy::cast_precision_loss)]
+            let cumulative_size_d = cumulative_size as f64;
+
+            space_points.push([d, cumulative_size_d]);
+            activity_points.push([d, count_d]);
+        }
+
+        // Custom time-axis calendar formatter
+        let x_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value.round() as i64;
+            stats::temporal_timeline::format_epoch_to_date(val)
+        };
+
+        let y_space_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value;
+            if val <= 0.0 {
+                return String::new();
+            }
+            prettier_bytes::ByteFormatter::new()
+                .format(val as u64)
+                .to_string()
+        };
+
+        // Shared link structures
+        let link_group_id = ui.id().with("linked_timeline_plots");
+        let link_axis = egui::Vec2b::new(true, false); // link X only, do not scale Y together
+        let link_cursor = egui::Vec2b::new(true, false);
+
+        let space_line = Line::new("Space Progress", space_points)
+            .color(crate::colors::COLOR_SCANNING)
+            .width(2.0);
+
+        let activity_line = Line::new("Activity Frequency", activity_points)
+            .color(crate::colors::GLOW_INNER_CORE)
+            .width(1.5);
+
+        // Render dual layout
+        let half_height = (ui.available_height() - 40.0) / 2.0;
+
+        ui.label(
+            "Timeline views are dynamically linked; zooming/panning one will scroll the other.",
+        );
+        ui.add_space(4.0);
+
+        // 1. Top Plot: Cumulative Storage Growth
+        let top_x = vec![AxisHints::new_x().formatter(x_formatter)];
+        let top_y = vec![
+            AxisHints::new_y()
+                .label("Disk Space")
+                .formatter(y_space_formatter),
+        ];
+        let plot_top = Plot::new("timeline_space_plot")
+            .height(half_height)
+            .custom_x_axes(top_x)
+            .custom_y_axes(top_y)
+            .link_axis(link_group_id, link_axis)
+            .link_cursor(link_group_id, link_cursor)
+            .legend(egui_plot::Legend::default().position(egui_plot::Corner::LeftTop));
+
+        plot_top.show(ui, |plot_ui| {
+            plot_ui.line(space_line);
+        });
+
+        ui.add_space(6.0);
+
+        // 2. Bottom Plot: Activity frequency spikes
+        let bottom_x = vec![AxisHints::new_x().formatter(x_formatter)];
+        let bottom_y = vec![AxisHints::new_y().label("Files Modified")];
+        let plot_bottom = Plot::new("timeline_activity_plot")
+            .height(half_height)
+            .custom_x_axes(bottom_x)
+            .custom_y_axes(bottom_y)
+            .link_axis(link_group_id, link_axis)
+            .link_cursor(link_group_id, link_cursor)
+            .legend(egui_plot::Legend::default().position(egui_plot::Corner::LeftTop));
+
+        plot_bottom.show(ui, |plot_ui| {
+            plot_ui.line(activity_line);
         });
     }
 }
@@ -1139,6 +1254,7 @@ impl eframe::App for GuiApp {
                                 PlotType::AgeSizeScatter => "🌌 File Age vs. File Size",
                                 PlotType::DirComposition => "🍰 Directory Composition",
                                 PlotType::ExtensionBoxplot => "📦 File Sizes by Extension",
+                                PlotType::TemporalTimeline => "⏱ Linked Temporal Timelines",
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
@@ -1161,6 +1277,11 @@ impl eframe::App for GuiApp {
                                     PlotType::ExtensionBoxplot,
                                     "📦 File Sizes by Extension",
                                 );
+                                ui.selectable_value(
+                                    &mut self.plot_type,
+                                    PlotType::TemporalTimeline,
+                                    "⏱ Linked Temporal Timelines",
+                                );
                             });
                     });
                     ui.separator();
@@ -1182,6 +1303,9 @@ impl eframe::App for GuiApp {
                             }
                             PlotType::ExtensionBoxplot => {
                                 self.render_boxplot_plot(ui, &snapshot);
+                            }
+                            PlotType::TemporalTimeline => {
+                                self.render_timeline_plot(ui, &snapshot);
                             }
                         }
                     }
