@@ -52,6 +52,9 @@ pub struct GuiApp {
     cached_blocks: Vec<TreemapBlock>,
     last_snapshot_ptr: usize,
     last_rect: egui::Rect,
+
+    // Single-use trigger to automatically scroll the list view to the target row
+    scroll_to_selected: bool,
 }
 
 struct ExtensionStat {
@@ -81,6 +84,7 @@ impl GuiApp {
             cached_blocks: Vec::new(),
             last_snapshot_ptr: 0,
             last_rect: egui::Rect::NOTHING,
+            scroll_to_selected: false,
         }
     }
 
@@ -96,6 +100,7 @@ impl GuiApp {
         self.cached_blocks.clear();
         self.last_snapshot_ptr = 0;
         self.last_rect = egui::Rect::NOTHING;
+        self.scroll_to_selected = false;
     }
 
     /// Renders the shared "File" actions used in both the top toolbar and node context menus.
@@ -374,8 +379,35 @@ impl eframe::App for GuiApp {
                         let mut visible_nodes = Vec::new();
                         self.flatten_visible_tree(&snapshot, 0, 0, &mut visible_nodes);
 
+                        // Fetch the exact layout spacing variables
                         let row_height = ui.spacing().interact_size.y;
-                        egui::ScrollArea::vertical().show_rows(
+                        let spacing_y = ui.spacing().item_spacing.y;
+                        let row_stride = row_height + spacing_y; // Actual pixel gap per item index
+                        let available_height = ui.available_height(); // Height of the left panel
+
+                        // --- Mathematically Correct Programmatic Scrolling ---
+                        let mut scroll_area = egui::ScrollArea::vertical();
+                        if self.scroll_to_selected {
+                            if let Some(selected_idx) = self.selected_node_idx {
+                                // Find the index of the selected item in the flat visible list
+                                if let Some(row_index) = visible_nodes
+                                    .iter()
+                                    .position(|&(node_idx, _)| node_idx == selected_idx)
+                                {
+                                    #[allow(clippy::cast_precision_loss)]
+                                    let target_y = (row_index as f32) * row_stride;
+
+                                    // Calculate center offset relative to the available height of the viewport
+                                    let center_offset = (available_height - row_height) / 2.0;
+                                    let offset = (target_y - center_offset).max(0.0);
+
+                                    scroll_area = scroll_area.vertical_scroll_offset(offset);
+                                }
+                            }
+                            self.scroll_to_selected = false; // Reset the scroll trigger
+                        }
+
+                        scroll_area.show_rows(
                             ui,
                             row_height,
                             visible_nodes.len(),
@@ -626,6 +658,7 @@ impl eframe::App for GuiApp {
                         && let Some(block) = hovered_block
                     {
                         self.selected_node_idx = Some(block.node_idx);
+                        self.scroll_to_selected = true; // Raise scroll trigger
 
                         // Auto expand parents so it shows up in tree view
                         let mut curr = Some(block.node_idx);
