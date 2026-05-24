@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use bytemuck::{Pod, Zeroable};
 
 pub const NO_INDEX: u32 = u32::MAX;
+pub const NO_EXTENSION: &str = "(no extension)";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Pod, Zeroable)]
 #[repr(transparent)]

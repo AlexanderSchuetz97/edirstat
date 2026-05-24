@@ -1,0 +1,9 @@
+pub mod treemap;
+
+pub trait StatsChart {
+    type Output;
+
+    /// Iteratively computes or updates the chart's visual/plot data
+    /// using the latest thread-safe snapshot frame.
+    fn compute(&mut self, snapshot: &crate::arena::FileArenaSnapshot) -> Self::Output;
+}

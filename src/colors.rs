@@ -1,4 +1,4 @@
-use eframe::egui::Color32;
+use eframe::egui::{self, Color32};
 
 // --- Custom Theme Palette Constants ---
 
@@ -37,3 +37,35 @@ pub const EXT_AUDIO: Color32 = Color32::from_rgb(14, 165, 233); // Audio sky-blu
 pub const EXT_VIDEO: Color32 = Color32::from_rgb(20, 184, 166); // Video teal
 pub const EXT_IMAGE: Color32 = Color32::from_rgb(244, 63, 94); // Image rose
 pub const EXT_NONE: Color32 = Color32::from_rgb(75, 85, 99); // Muted dark gray
+
+#[must_use]
+pub fn get_color_for_extension(ext: &str) -> egui::Color32 {
+    match ext {
+        "rs" => EXT_RUST,
+        "toml" => EXT_TOML,
+        "git" | "gitignore" => EXT_GIT,
+        "js" | "ts" => EXT_JS_TS,
+        "json" | "yaml" => EXT_CONFIG,
+        "html" | "css" => EXT_WEB,
+        "py" => EXT_PYTHON,
+        "c" | "cpp" | "h" => EXT_CPP,
+        "zip" | "tar" | "gz" => EXT_COMPRESSED,
+        "mp3" | "wav" | "flac" => EXT_AUDIO,
+        "mp4" | "mkv" | "avi" => EXT_VIDEO,
+        "png" | "jpg" | "jpeg" | "gif" => EXT_IMAGE,
+        super::arena::NO_EXTENSION => EXT_NONE,
+        _ => {
+            // Hash the extension to generate a stable, beautiful pseudo-random color
+            let mut hash: u32 = 5381;
+            for c in ext.bytes() {
+                hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
+            }
+            // Hue from hash, Saturation ~75%, Lightness ~55%
+            #[allow(clippy::cast_precision_loss)]
+            let hue = (hash % 360) as f32 / 360.0;
+
+            let color = egui::epaint::Hsva::new(hue, 0.75, 0.55, 1.0);
+            egui::Color32::from(color)
+        }
+    }
+}

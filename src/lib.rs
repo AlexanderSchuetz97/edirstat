@@ -33,6 +33,7 @@ pub mod coordinator;
 pub mod error;
 pub mod gui;
 pub mod persistence;
+pub mod stats;
 pub mod traversal;
 
 pub use error::EdirstatError;
