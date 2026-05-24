@@ -11,6 +11,7 @@ use smallvec::SmallVec;
 
 use super::{
     arena::{FileArenaSnapshot, FileNode, NO_INDEX, StringPool},
+    colors,
     coordinator::SharedState,
     persistence::{load_snapshot, save_snapshot},
     traversal::TraversalEngine,
@@ -265,9 +266,9 @@ impl eframe::App for GuiApp {
                 // Live status display
                 if is_scanning {
                     ui.spinner();
-                    ui.colored_label(egui::Color32::from_rgb(139, 92, 246), "Scanning Disk...");
+                    ui.colored_label(colors::COLOR_SCANNING, "Scanning Disk...");
                 } else if self.current_scan_path.is_some() {
-                    ui.colored_label(egui::Color32::from_rgb(34, 197, 94), "Scan Complete");
+                    ui.colored_label(colors::COLOR_SCAN_COMPLETE, "Scan Complete");
                 } else {
                     ui.label("Idle");
                 }
@@ -629,8 +630,8 @@ impl eframe::App for GuiApp {
 
                             // 1. Draw Outer Expanding Glow (grows and fades)
                             let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
-                            let glow_color = egui::Color32::from_rgb(139, 92, 246)
-                                .linear_multiply(glow_alpha as f32);
+                            let glow_color =
+                                colors::GLOW_OUTER_BASE.linear_multiply(glow_alpha as f32);
                             let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
                             painter.rect(
                                 rect,
@@ -641,7 +642,7 @@ impl eframe::App for GuiApp {
                             );
 
                             // 2. Draw Inner Sharp Contrast Core (stays crisp)
-                            let core_color = egui::Color32::from_rgb(196, 181, 253); // Soft pastel purple/violet
+                            let core_color = colors::GLOW_INNER_CORE; // Soft pastel purple/violet
                             let core_thickness = 1.0f32.mul_add(pulse as f32, 1.5);
                             painter.rect(
                                 rect,
@@ -710,14 +711,14 @@ impl eframe::App for GuiApp {
                     .collapsible(false)
                     .resizable(false)
                     .open(&mut open)
-                    .frame(egui::Frame::window(ui.style()).stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 38, 38)))) // Thick red border outline
+                    .frame(egui::Frame::window(ui.style()).stroke(egui::Stroke::new(2.0, colors::DELETION_BORDER))) // Thick red border outline
                     .show(&ctx, |ui| {
                         ui.vertical(|ui| {
                             let path = std::path::Path::new(&path_str);
                             if path.exists() {
                                 ui.heading(
                                     egui::RichText::new("⚠ Permanent Deletion Warning!")
-                                        .color(egui::Color32::from_rgb(239, 68, 68))
+                                        .color(colors::DELETION_WARNING)
                                         .strong()
                                 );
                                 ui.separator();
@@ -743,7 +744,7 @@ impl eframe::App for GuiApp {
                                         egui::RichText::new("🗑 Yes, Delete Permanently")
                                             .color(egui::Color32::WHITE)
                                             .strong()
-                                    ).fill(egui::Color32::from_rgb(220, 38, 38));
+                                    ).fill(colors::DELETION_BORDER);
 
                                     let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
                                     if confirm_res.clicked() {
@@ -768,7 +769,7 @@ impl eframe::App for GuiApp {
                             } else {
                                 ui.heading(
                                     egui::RichText::new("❌ Path Does Not Exist!")
-                                        .color(egui::Color32::from_rgb(239, 68, 68))
+                                        .color(colors::DELETION_WARNING)
                                         .strong()
                                 );
                                 ui.separator();
@@ -975,7 +976,7 @@ impl GuiApp {
 
         // Draw vertical indentation guidelines to visually track nested containers
         let painter = ui.painter();
-        let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(65));
+        let stroke = egui::Stroke::new(1.0, colors::INDENT_GUIDELINE);
         for i in 0..indent_level {
             #[allow(clippy::cast_precision_loss)]
             let x = (i as f32).mul_add(16.0, rect.min.x) + 8.0;
@@ -1004,13 +1005,12 @@ fn setup_custom_style(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
 
     // Background Slate Color
-    visuals.panel_fill = egui::Color32::from_rgb(18, 20, 28);
-    visuals.window_fill = egui::Color32::from_rgb(26, 29, 38);
+    visuals.panel_fill = colors::BG_PANEL_SLATE;
+    visuals.window_fill = colors::BG_WINDOW_SLATE;
 
     // Borders
-    visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(26, 29, 38);
-    visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(38, 43, 56));
+    visuals.widgets.noninteractive.bg_fill = colors::BG_WINDOW_SLATE;
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, colors::STROKE_BORDER_SLATE);
 
     ctx.set_visuals(visuals);
 }
@@ -1149,7 +1149,7 @@ fn build_treemap(
     }
 
     if children.is_empty() {
-        let color = egui::Color32::from_gray(100);
+        let color = colors::TREEMAP_DIR_FALLBACK;
         blocks.push(TreemapBlock {
             rect,
             node_idx,
@@ -1315,19 +1315,19 @@ fn build_treemap(
 // Harmonious custom HSL colors for extensions
 fn get_color_for_extension(ext: &str) -> egui::Color32 {
     match ext {
-        "rs" => egui::Color32::from_rgb(239, 68, 68), // Rust red
-        "toml" => egui::Color32::from_rgb(59, 130, 246), // Toml blue
-        "git" | "gitignore" => egui::Color32::from_rgb(107, 114, 128), // Git gray
-        "js" | "ts" => egui::Color32::from_rgb(234, 179, 8), // JS yellow
-        "json" | "yaml" => egui::Color32::from_rgb(168, 85, 247), // Purple config
-        "html" | "css" => egui::Color32::from_rgb(249, 115, 22), // HTML/CSS orange
-        "py" => egui::Color32::from_rgb(16, 185, 129), // Python green
-        "c" | "cpp" | "h" => egui::Color32::from_rgb(6, 182, 212), // C/C++ cyan
-        "zip" | "tar" | "gz" => egui::Color32::from_rgb(236, 72, 153), // Compressed pink
-        "mp3" | "wav" | "flac" => egui::Color32::from_rgb(14, 165, 233), // Audio sky-blue
-        "mp4" | "mkv" | "avi" => egui::Color32::from_rgb(20, 184, 166), // Video teal
-        "png" | "jpg" | "jpeg" | "gif" => egui::Color32::from_rgb(244, 63, 94), // Image rose
-        NO_EXTENSION => egui::Color32::from_rgb(75, 85, 99), // Muted dark gray
+        "rs" => colors::EXT_RUST,
+        "toml" => colors::EXT_TOML,
+        "git" | "gitignore" => colors::EXT_GIT,
+        "js" | "ts" => colors::EXT_JS_TS,
+        "json" | "yaml" => colors::EXT_CONFIG,
+        "html" | "css" => colors::EXT_WEB,
+        "py" => colors::EXT_PYTHON,
+        "c" | "cpp" | "h" => colors::EXT_CPP,
+        "zip" | "tar" | "gz" => colors::EXT_COMPRESSED,
+        "mp3" | "wav" | "flac" => colors::EXT_AUDIO,
+        "mp4" | "mkv" | "avi" => colors::EXT_VIDEO,
+        "png" | "jpg" | "jpeg" | "gif" => colors::EXT_IMAGE,
+        NO_EXTENSION => colors::EXT_NONE,
         _ => {
             // Hash the extension to generate a stable, beautiful pseudo-random color
             let mut hash: u32 = 5381;

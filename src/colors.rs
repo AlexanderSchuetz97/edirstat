@@ -1,0 +1,39 @@
+use eframe::egui::Color32;
+
+// --- Custom Theme Palette Constants ---
+
+// UI Status Indicators
+pub const COLOR_SCANNING: Color32 = Color32::from_rgb(139, 92, 246); // Purple/violet
+pub const COLOR_SCAN_COMPLETE: Color32 = Color32::from_rgb(34, 197, 94); // Green
+
+// Treemap Highlight Overlays
+pub const GLOW_OUTER_BASE: Color32 = Color32::from_rgb(139, 92, 246); // Purple/violet
+pub const GLOW_INNER_CORE: Color32 = Color32::from_rgb(196, 181, 253); // Soft pastel purple/violet
+pub const TREEMAP_DIR_FALLBACK: Color32 = Color32::from_gray(100);
+
+// Deletion Modal
+pub const DELETION_BORDER: Color32 = Color32::from_rgb(220, 38, 38); // Dark red
+pub const DELETION_WARNING: Color32 = Color32::from_rgb(239, 68, 68); // Bright red
+
+// Directory Tree Guidelines
+pub const INDENT_GUIDELINE: Color32 = Color32::from_gray(65);
+
+// Glassmorphic Custom Canvas Styling
+pub const BG_PANEL_SLATE: Color32 = Color32::from_rgb(18, 20, 28);
+pub const BG_WINDOW_SLATE: Color32 = Color32::from_rgb(26, 29, 38);
+pub const STROKE_BORDER_SLATE: Color32 = Color32::from_rgb(38, 43, 56);
+
+// Extension Groupings (Harmonious Palette)
+pub const EXT_RUST: Color32 = Color32::from_rgb(239, 68, 68); // Rust red
+pub const EXT_TOML: Color32 = Color32::from_rgb(59, 130, 246); // Toml blue
+pub const EXT_GIT: Color32 = Color32::from_rgb(107, 114, 128); // Git gray
+pub const EXT_JS_TS: Color32 = Color32::from_rgb(234, 179, 8); // JS yellow
+pub const EXT_CONFIG: Color32 = Color32::from_rgb(168, 85, 247); // Purple config
+pub const EXT_WEB: Color32 = Color32::from_rgb(249, 115, 22); // HTML/CSS orange
+pub const EXT_PYTHON: Color32 = Color32::from_rgb(16, 185, 129); // Python green
+pub const EXT_CPP: Color32 = Color32::from_rgb(6, 182, 212); // C/C++ cyan
+pub const EXT_COMPRESSED: Color32 = Color32::from_rgb(236, 72, 153); // Compressed pink
+pub const EXT_AUDIO: Color32 = Color32::from_rgb(14, 165, 233); // Audio sky-blue
+pub const EXT_VIDEO: Color32 = Color32::from_rgb(20, 184, 166); // Video teal
+pub const EXT_IMAGE: Color32 = Color32::from_rgb(244, 63, 94); // Image rose
+pub const EXT_NONE: Color32 = Color32::from_rgb(75, 85, 99); // Muted dark gray

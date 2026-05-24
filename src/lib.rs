@@ -28,6 +28,7 @@
 #![cfg_attr(windows, feature(windows_by_handle))]
 
 pub mod arena;
+pub mod colors;
 pub mod coordinator;
 pub mod error;
 pub mod gui;
