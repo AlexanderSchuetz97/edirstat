@@ -7,8 +7,8 @@ pub const COLOR_SCANNING: Color32 = Color32::from_rgb(139, 92, 246); // Purple/v
 pub const COLOR_SCAN_COMPLETE: Color32 = Color32::from_rgb(34, 197, 94); // Green
 
 // Treemap Highlight Overlays
-pub const GLOW_OUTER_BASE: Color32 = Color32::from_rgb(139, 92, 246); // Purple/violet
-pub const GLOW_INNER_CORE: Color32 = Color32::from_rgb(196, 181, 253); // Soft pastel purple/violet
+pub const GLOW_OUTER_BASE: Color32 = Color32::from_rgb(246, 92, 92); // Gentle red
+pub const GLOW_INNER_CORE: Color32 = Color32::from_rgb(253, 181, 181); // Even lighter red
 pub const TREEMAP_DIR_FALLBACK: Color32 = Color32::from_gray(100);
 
 // Deletion Modal
