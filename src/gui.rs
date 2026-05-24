@@ -36,6 +36,7 @@ pub enum VisMode {
 pub enum PlotType {
     SizeDistribution,
     AgeSizeScatter,
+    DirComposition,
 }
 
 pub struct GuiApp {
@@ -54,6 +55,7 @@ pub struct GuiApp {
 
     // Analytics components
     scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
+    dir_comp_chart: stats::dir_composition::DirCompositionChart,
 
     // Modal states
     delete_confirm_checked: bool,
@@ -97,6 +99,7 @@ impl GuiApp {
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
             scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart::new(),
+            dir_comp_chart: stats::dir_composition::DirCompositionChart::new(0),
             delete_confirm_checked: false,
             delete_node_idx: None,
             active_modal: None,
@@ -122,6 +125,7 @@ impl GuiApp {
         self.active_modal = None;
         self.traversal_engine.stats().reset();
         self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::new();
+        self.dir_comp_chart = stats::dir_composition::DirCompositionChart::new(0);
         self.cached_blocks.clear();
         self.last_snapshot_ptr = 0;
         self.last_rect = egui::Rect::NOTHING;
@@ -212,8 +216,6 @@ impl GuiApp {
     }
 
     fn render_scatter_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        use stats::StatsChart;
-
         // Recompute parameters if snapshot boundary updates
         let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
         if self.last_snapshot_ptr != snapshot_ptr || self.scatter_chart.top_files.is_empty() {
@@ -244,7 +246,6 @@ impl GuiApp {
                 } else {
                     0.0
                 };
-
                 #[allow(clippy::cast_precision_loss)]
                 let size_log = (size as f64).log10();
 
@@ -356,6 +357,107 @@ impl GuiApp {
                 }
             }
         }
+    }
+
+    fn render_dir_composition_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        use stats::StatsChart;
+
+        // Bind composition to active tree folder, falling back to root (0)
+        let active_dir = self.selected_node_idx.unwrap_or(0);
+
+        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
+        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr
+            || self.dir_comp_chart.parent_idx != active_dir
+            || self.dir_comp_chart.children_composition.is_empty();
+
+        if needs_rebuild {
+            self.dir_comp_chart.parent_idx = active_dir;
+            self.dir_comp_chart.compute(snapshot);
+            self.last_snapshot_ptr = snapshot_ptr;
+        }
+
+        if self.dir_comp_chart.children_composition.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    "Selected path has no nested subdirectories or files to display composition.",
+                );
+            });
+            return;
+        }
+
+        let parent_name = snapshot
+            .string_pool
+            .get(snapshot.nodes[active_dir as usize].name_id)
+            .unwrap_or("Root");
+        ui.strong(format!("📁 Active Directory: {parent_name}"));
+        ui.add_space(4.0);
+
+        let children_count = self.dir_comp_chart.children_composition.len();
+        let chart_ref = &self.dir_comp_chart;
+
+        let x_formatter = move |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value.round() as usize;
+            if val < children_count {
+                chart_ref.children_composition[val].0.clone()
+            } else {
+                String::new()
+            }
+        };
+
+        let y_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let val = mark.value;
+            if val <= 0.0 {
+                return String::new();
+            }
+            prettier_bytes::ByteFormatter::new()
+                .format(val as u64)
+                .to_string()
+        };
+
+        let x_grid = move |_input: egui_plot::GridInput| {
+            let mut marks = vec![];
+            for i in 0..children_count {
+                #[allow(clippy::cast_precision_loss)]
+                let value = i as f64;
+
+                marks.push(GridMark {
+                    value,
+                    step_size: 1.0,
+                });
+            }
+            marks
+        };
+
+        let x_axes = vec![
+            AxisHints::new_x()
+                .label("Direct Children")
+                .formatter(x_formatter),
+        ];
+        let y_axes = vec![
+            AxisHints::new_y()
+                .label("Cumulative Space")
+                .formatter(y_formatter),
+        ];
+
+        // Generate stacked bar charts for active configuration
+        let mut chart_gen = stats::dir_composition::DirCompositionChart::new(active_dir);
+        let stacked_charts = chart_gen.compute(snapshot);
+
+        let plot = Plot::new("dir_composition_plot")
+            .height(ui.available_height() - 30.0)
+            .custom_x_axes(x_axes)
+            .custom_y_axes(y_axes)
+            .x_grid_spacer(x_grid)
+            .legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop))
+            .allow_zoom(false)
+            .allow_drag(false)
+            .allow_scroll(false);
+
+        plot.show(ui, |plot_ui| {
+            for chart in stacked_charts {
+                plot_ui.bar_chart(chart);
+            }
+        });
     }
 }
 
@@ -763,7 +865,6 @@ impl eframe::App for GuiApp {
                             || rect != self.last_rect;
 
                         if needs_rebuild {
-                            use stats::StatsChart;
                             let mut chart = stats::treemap::TreemapChart::new(rect);
                             self.cached_blocks = chart.compute(&snapshot);
                             self.last_snapshot_ptr = snapshot_ptr;
@@ -937,6 +1038,7 @@ impl eframe::App for GuiApp {
                             .selected_text(match self.plot_type {
                                 PlotType::SizeDistribution => "📊 File Size Distribution",
                                 PlotType::AgeSizeScatter => "🌌 File Age vs. File Size",
+                                PlotType::DirComposition => "🍰 Directory Composition",
                             })
                             .show_ui(ui, |ui| {
                                 ui.selectable_value(
@@ -948,6 +1050,11 @@ impl eframe::App for GuiApp {
                                     &mut self.plot_type,
                                     PlotType::AgeSizeScatter,
                                     "🌌 File Age vs. File Size",
+                                );
+                                ui.selectable_value(
+                                    &mut self.plot_type,
+                                    PlotType::DirComposition,
+                                    "🍰 Directory Composition",
                                 );
                             });
                     });
@@ -964,6 +1071,9 @@ impl eframe::App for GuiApp {
                             }
                             PlotType::AgeSizeScatter => {
                                 self.render_scatter_plot(ui, &snapshot);
+                            }
+                            PlotType::DirComposition => {
+                                self.render_dir_composition_plot(ui, &snapshot);
                             }
                         }
                     }
@@ -1249,7 +1359,7 @@ impl GuiApp {
             self.draw_file_menu_contents(ui, snapshot);
         });
 
-        // Draw vertical indentation guidelines to visually track nested containers
+        // Draw vertical indentation guidelines to visually track nested guidelines
         let painter = ui.painter();
         let stroke = egui::Stroke::new(1.0, crate::colors::INDENT_GUIDELINE);
         for i in 0..indent_level {
