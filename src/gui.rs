@@ -573,21 +573,31 @@ impl eframe::App for GuiApp {
                         );
                     }
 
-                    if let Some(selected_idx) = self.selected_node_idx
-                        && let Some(block) = self
-                            .cached_blocks
-                            .iter()
-                            .find(|b| b.node_idx == selected_idx)
-                    {
-                        let accent_purple = egui::Color32::from_rgb(139, 92, 246);
-                        let stroke = egui::Stroke::new(2.5, accent_purple);
-                        painter.rect(
-                            block.rect,
-                            0.0,
-                            egui::Color32::TRANSPARENT,
-                            stroke,
-                            egui::StrokeKind::Inside,
-                        );
+                    if let Some(selected_idx) = self.selected_node_idx {
+                        // Reconstruct the bounding box union of all blocks belonging to the selection.
+                        // For a file, this yields its individual rect. For a directory, it yields the
+                        // exact unified rect of its visible children on-screen.
+                        let mut target_rect: Option<egui::Rect> = None;
+                        for block in &self.cached_blocks {
+                            if is_descendant(&snapshot.nodes, block.node_idx, selected_idx) {
+                                match target_rect {
+                                    None => target_rect = Some(block.rect),
+                                    Some(ref mut r) => *r = r.union(block.rect),
+                                }
+                            }
+                        }
+
+                        if let Some(rect) = target_rect {
+                            let accent_purple = egui::Color32::from_rgb(139, 92, 246);
+                            let stroke = egui::Stroke::new(3.0, accent_purple); // Bold selection border
+                            painter.rect(
+                                rect,
+                                0.0,
+                                egui::Color32::TRANSPARENT,
+                                stroke,
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                     }
 
                     // Click event to select node
@@ -1027,6 +1037,22 @@ fn recurse_child(
     }
 
     build_treemap(config, child_idx, child_rect, depth + 1, blocks);
+}
+
+/// Walks up the parent chain of a node to determine if it is a descendant of a target ancestor.
+fn is_descendant(nodes: &[FileNode], child_idx: u32, ancestor_idx: u32) -> bool {
+    let mut curr = Some(child_idx);
+    while let Some(idx) = curr {
+        if idx == ancestor_idx {
+            return true;
+        }
+        if let Some(node) = nodes.get(idx as usize) {
+            curr = node.parent_opt();
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 fn build_treemap(
