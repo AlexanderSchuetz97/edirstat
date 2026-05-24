@@ -1420,7 +1420,7 @@ impl eframe::App for GuiApp {
                                 .strong()
                                 .color(ui.visuals().strong_text_color())
                         );
-                        ui.label("v1.0.0");
+                        ui.label(concat!("v", env!("CARGO_PKG_VERSION")));
                         ui.separator();
                         ui.label("By: Cody Wyatt Neiman (xangelix) <".to_owned() + "neiman" + "@" + "cody.to>");
                         ui.add_space(8.0);
