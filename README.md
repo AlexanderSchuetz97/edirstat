@@ -1,7 +1,6 @@
 # eDirStat
 
-<video src="https://media.githubusercontent.com/media/Xangelix/edirstat/main/docs/videos/steam-library-demo-1080p.mp4" controls autoplay loop muted max-width="100%">
-</video>
+https://github.com/user-attachments/assets/cad3056f-1d2c-45da-9827-3d0a90b8066a
 
 [![Crates.io](https://img.shields.io/crates/v/edirstat)](https://crates.io/crates/edirstat)
 [![Docs.rs](https://docs.rs/edirstat/badge.svg)](https://docs.rs/edirstat)
