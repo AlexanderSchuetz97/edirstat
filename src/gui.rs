@@ -97,6 +97,35 @@ impl GuiApp {
         self.last_snapshot_ptr = 0;
         self.last_rect = egui::Rect::NOTHING;
     }
+
+    /// Renders the shared "File" actions used in both the top toolbar and node context menus.
+    fn draw_file_menu_contents(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        let has_selection = self.selected_node_idx.is_some();
+
+        let open_btn = ui.add_enabled(has_selection, egui::Button::new("🗁 Open in File Manager"));
+        if open_btn.clicked() {
+            let idx_opt = self.selected_node_idx;
+            if let Some(idx) = idx_opt {
+                let path_str = snapshot.get_full_path(idx);
+                let path = std::path::Path::new(&path_str);
+                let dir_to_open = if path.is_dir() {
+                    path
+                } else {
+                    path.parent().map_or(path, |p| p)
+                };
+                let _ = open::that(dir_to_open);
+            }
+            ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
+        }
+
+        let delete_btn = ui.add_enabled(has_selection, egui::Button::new("🗑 Delete (Permanent)"));
+        if delete_btn.clicked() {
+            self.active_modal = Some(ActiveModal::Delete);
+            self.delete_confirm_checked = false;
+            self.delete_node_idx = self.selected_node_idx;
+            ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
+        }
+    }
 }
 
 impl eframe::App for GuiApp {
@@ -308,34 +337,7 @@ impl eframe::App for GuiApp {
                     // Toolbar above the root tree
                     egui::MenuBar::new().ui(ui, |ui| {
                         ui.menu_button("File", |ui| {
-                            let has_selection = self.selected_node_idx.is_some();
-                            let open_btn = ui.add_enabled(
-                                has_selection,
-                                egui::Button::new("🗁 Open in File Manager"),
-                            );
-                            if open_btn.clicked() {
-                                let idx_opt = self.selected_node_idx;
-                                if let Some(idx) = idx_opt {
-                                    let path_str = snapshot.get_full_path(idx);
-                                    let path = std::path::Path::new(&path_str);
-                                    let dir_to_open = if path.is_dir() {
-                                        path
-                                    } else {
-                                        path.parent().map_or(path, |p| p)
-                                    };
-                                    let _ = open::that(dir_to_open);
-                                }
-                            }
-
-                            let delete_btn = ui.add_enabled(
-                                has_selection,
-                                egui::Button::new("🗑 Delete (Permanent)"),
-                            );
-                            if delete_btn.clicked() {
-                                self.active_modal = Some(ActiveModal::Delete);
-                                self.delete_confirm_checked = false;
-                                self.delete_node_idx = self.selected_node_idx;
-                            }
+                            self.draw_file_menu_contents(ui, &snapshot);
                         });
                         ui.menu_button("View", |ui| {
                             ui.checkbox(&mut self.monospace_paths, "🅰 Monospace Paths");
