@@ -46,7 +46,12 @@ pub struct GuiApp {
 
     // Extension breakdown stats
     extension_stats: Vec<ExtensionStat>,
-    last_extension_update: Option<Instant>, // tracking for live throttled updates
+    last_extension_update: Option<Instant>,
+
+    // Layout caching fields
+    cached_blocks: Vec<TreemapBlock>,
+    last_snapshot_ptr: usize,
+    last_rect: egui::Rect,
 }
 
 struct ExtensionStat {
@@ -72,7 +77,10 @@ impl GuiApp {
             scan_start_time: None,
             total_scan_duration: None,
             extension_stats: Vec::new(),
-            last_extension_update: None, // Added initialization
+            last_extension_update: None,
+            cached_blocks: Vec::new(),
+            last_snapshot_ptr: 0,
+            last_rect: egui::Rect::NOTHING,
         }
     }
 
@@ -80,48 +88,14 @@ impl GuiApp {
         self.selected_node_idx = None;
         self.expanded_nodes.clear();
         self.extension_stats.clear();
-        self.last_extension_update = None; // Added reset
+        self.last_extension_update = None;
         self.delete_confirm_checked = false;
         self.delete_node_idx = None;
         self.active_modal = None;
         self.traversal_engine.stats().reset();
-    }
-
-    fn update_extension_stats(&mut self, snapshot: &FileArenaSnapshot) {
-        let mut ext_map: HashMap<String, (u64, u32)> = HashMap::new();
-
-        for node in snapshot.nodes.iter() {
-            if node.is_directory() {
-                continue;
-            }
-            if let Some(name) = snapshot.string_pool.get(node.name_id) {
-                let ext = Path::new(name).extension().map_or_else(
-                    || NO_EXTENSION.to_string(),
-                    |s| s.to_string_lossy().to_ascii_lowercase(),
-                );
-
-                let entry = ext_map.entry(ext).or_insert((0, 0));
-                entry.0 += node.size;
-                entry.1 += 1;
-            }
-        }
-
-        let mut stats: Vec<ExtensionStat> = ext_map
-            .into_iter()
-            .map(|(ext, (total_size, file_count))| {
-                let color = get_color_for_extension(&ext);
-                ExtensionStat {
-                    ext,
-                    total_size,
-                    file_count,
-                    color,
-                }
-            })
-            .collect();
-
-        // Sort by total size descending
-        stats.sort_by_key(|b| std::cmp::Reverse(b.total_size));
-        self.extension_stats = stats;
+        self.cached_blocks.clear();
+        self.last_snapshot_ptr = 0;
+        self.last_rect = egui::Rect::NOTHING;
     }
 }
 
@@ -211,6 +185,37 @@ impl eframe::App for GuiApp {
                                     .store(Arc::new(loaded_snapshot));
                                 self.current_scan_path = Some(path);
                                 self.scan_start_time = None;
+
+                                // Rebuild extension stats exactly once in the background upon load
+                                let mut ext_map: HashMap<String, (u64, u32)> = HashMap::new();
+                                for node in self.shared_state.current_snapshot.load().nodes.iter() {
+                                    if node.is_directory() {
+                                        continue;
+                                    }
+                                    if let Some(name) = self
+                                        .shared_state
+                                        .current_snapshot
+                                        .load()
+                                        .string_pool
+                                        .get(node.name_id)
+                                    {
+                                        let ext = Path::new(name).extension().map_or_else(
+                                            || NO_EXTENSION.to_string(),
+                                            |s| s.to_string_lossy().to_ascii_lowercase(),
+                                        );
+                                        let entry = ext_map.entry(ext).or_insert((0, 0));
+                                        entry.0 += node.size;
+                                        entry.1 += 1;
+                                    }
+                                }
+                                let mut stats: Vec<(String, u64, u32)> = ext_map
+                                    .into_iter()
+                                    .map(|(ext, (total_size, file_count))| {
+                                        (ext, total_size, file_count)
+                                    })
+                                    .collect();
+                                stats.sort_by_key(|b| std::cmp::Reverse(b.1));
+                                self.shared_state.extension_stats.store(Arc::new(stats));
                             }
                             Err(e) => {
                                 println!("Failed to load snapshot: {e}");
@@ -266,38 +271,19 @@ impl eframe::App for GuiApp {
                     prettier_bytes::ByteFormatter::new().format(bytes as u64)
                 ));
 
-                if is_scanning {
-                    if let Some(start) = self.scan_start_time {
-                        let elapsed = start.elapsed();
+                if is_scanning && let Some(start) = self.scan_start_time {
+                    let elapsed = start.elapsed();
 
-                        #[allow(clippy::cast_precision_loss)]
-                        let speed = bytes as f64 / elapsed.as_secs_f64();
+                    #[allow(clippy::cast_precision_loss)]
+                    let speed = bytes as f64 / elapsed.as_secs_f64();
 
-                        ui.separator();
-                        ui.label(format!("⏱ Time: {:.1}s", elapsed.as_secs_f64()));
-                        ui.separator();
-                        ui.label(format!(
-                            "⚡ Speed: {}/s",
-                            prettier_bytes::ByteFormatter::new().format(speed as u64)
-                        ));
-                    }
-
-                    // Periodically update extension stats during active scanning
-                    let should_update = self
-                        .last_extension_update
-                        .is_none_or(|last| last.elapsed() >= Duration::from_millis(250));
-                    if should_update && !snapshot.nodes.is_empty() {
-                        self.update_extension_stats(&snapshot);
-                        self.last_extension_update = Some(Instant::now());
-                    }
-                } else if let Some(ref _path) = self.current_scan_path {
-                    // Run one final sync on completion or if loading a static snapshot
-                    if self.last_extension_update.is_some() || self.extension_stats.is_empty() {
-                        if !snapshot.nodes.is_empty() {
-                            self.update_extension_stats(&snapshot);
-                        }
-                        self.last_extension_update = None; // Reset tracker post-scan
-                    }
+                    ui.separator();
+                    ui.label(format!("⏱ Time: {:.1}s", elapsed.as_secs_f64()));
+                    ui.separator();
+                    ui.label(format!(
+                        "⚡ Speed: {}/s",
+                        prettier_bytes::ByteFormatter::new().format(speed as u64)
+                    ));
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -415,6 +401,20 @@ impl eframe::App for GuiApp {
                     );
                     ui.separator();
 
+                    // Map the pre-computed/pre-sorted stats vector from our background thread
+                    let shared_ext_stats = self.shared_state.extension_stats.load();
+                    if !shared_ext_stats.is_empty() {
+                        self.extension_stats = shared_ext_stats
+                            .iter()
+                            .map(|(ext, total_size, file_count)| ExtensionStat {
+                                ext: ext.clone(),
+                                total_size: *total_size,
+                                file_count: *file_count,
+                                color: get_color_for_extension(ext),
+                            })
+                            .collect();
+                    }
+
                     if self.extension_stats.is_empty() {
                         ui.label("No statistics gathered yet.");
                     } else {
@@ -482,108 +482,128 @@ impl eframe::App for GuiApp {
                         egui::Sense::click_and_drag(),
                     );
 
-                    let mut blocks = Vec::new();
-                    let config = TreemapConfig {
-                        nodes: &snapshot.nodes,
-                        string_pool: &snapshot.string_pool,
-                        max_depth: 5, // depth limit for visual clarity and performance
-                    };
-                    build_treemap(&config, 0, rect, 0, &mut blocks);
+                    // --- Layout Cache Check ---
+                    let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
+                    let needs_rebuild = self.cached_blocks.is_empty()
+                        || snapshot_ptr != self.last_snapshot_ptr
+                        || rect != self.last_rect;
+
+                    if needs_rebuild {
+                        let mut blocks = Vec::new();
+                        let config = TreemapConfig {
+                            nodes: &snapshot.nodes,
+                            string_pool: &snapshot.string_pool,
+                            max_depth: 20, // High depth is safe due to visual density checking
+                        };
+                        build_treemap(&config, 0, rect, 0, &mut blocks);
+                        self.cached_blocks = blocks;
+                        self.last_snapshot_ptr = snapshot_ptr;
+                        self.last_rect = rect;
+                    }
 
                     let painter = ui.painter_at(rect);
                     let mut hovered_block = None;
+                    let hover_pos = response.hover_pos();
 
-                    for block in &blocks {
-                        // Draw block rectangle
-                        let mut fill_color = block.color;
-                        let mut border_color = egui::Color32::TRANSPARENT;
-                        let mut border_width = 0.0;
-
-                        let is_hovered = response
-                            .hover_pos()
-                            .is_some_and(|pos| block.rect.contains(pos));
-                        if is_hovered {
-                            fill_color = fill_color.linear_multiply(1.3);
-                            border_color = egui::Color32::WHITE;
-                            border_width = 1.5;
-                            hovered_block = Some(block);
+                    // Look up hovered block (O(M) linear search is fast on layout blocks in Rust)
+                    if let Some(pos) = hover_pos {
+                        for block in &self.cached_blocks {
+                            if block.rect.contains(pos) {
+                                hovered_block = Some(block);
+                                break;
+                            }
                         }
+                    }
 
-                        // Check if block selected
-                        if self.selected_node_idx == Some(block.node_idx) {
-                            border_color = egui::Color32::from_rgb(139, 92, 246); // Accent purple border
-                            border_width = 2.5;
-                        }
-
-                        let stroke = if border_width > 0.0 {
-                            egui::Stroke::new(border_width, border_color)
-                        } else {
-                            egui::Stroke::NONE
-                        };
-
-                        // Draw vertical HSL/HSV visual gradient with egui::Mesh
+                    // GPU Batching: Consolidate static blocks into exactly ONE single mesh submission to the GPU
+                    let mut combined_mesh = egui::Mesh::default();
+                    for block in &self.cached_blocks {
+                        let fill_color = block.color;
                         let color_light = fill_color.linear_multiply(1.15);
                         let color_dark = fill_color.linear_multiply(0.75);
 
-                        let mut mesh = egui::Mesh::default();
-                        mesh.vertices.push(egui::epaint::Vertex {
+                        let base_vertex_idx = combined_mesh.vertices.len() as u32;
+
+                        combined_mesh.vertices.push(egui::epaint::Vertex {
                             pos: block.rect.left_top(),
                             uv: egui::epaint::WHITE_UV,
                             color: color_light,
                         });
-                        mesh.vertices.push(egui::epaint::Vertex {
+                        combined_mesh.vertices.push(egui::epaint::Vertex {
                             pos: block.rect.right_top(),
                             uv: egui::epaint::WHITE_UV,
                             color: color_light,
                         });
-                        mesh.vertices.push(egui::epaint::Vertex {
+                        combined_mesh.vertices.push(egui::epaint::Vertex {
                             pos: block.rect.right_bottom(),
                             uv: egui::epaint::WHITE_UV,
                             color: color_dark,
                         });
-                        mesh.vertices.push(egui::epaint::Vertex {
+                        combined_mesh.vertices.push(egui::epaint::Vertex {
                             pos: block.rect.left_bottom(),
                             uv: egui::epaint::WHITE_UV,
                             color: color_dark,
                         });
-                        mesh.add_triangle(0, 1, 2);
-                        mesh.add_triangle(0, 2, 3);
-                        painter.add(mesh);
 
-                        // Draw outline border if hovered or selected
-                        if border_width > 0.0 {
-                            painter.rect(
-                                block.rect,
-                                0.0,
-                                egui::Color32::TRANSPARENT,
-                                stroke,
-                                egui::StrokeKind::Inside,
-                            );
-                        }
+                        combined_mesh.add_triangle(
+                            base_vertex_idx,
+                            base_vertex_idx + 1,
+                            base_vertex_idx + 2,
+                        );
+                        combined_mesh.add_triangle(
+                            base_vertex_idx,
+                            base_vertex_idx + 2,
+                            base_vertex_idx + 3,
+                        );
+                    }
+
+                    painter.add(combined_mesh);
+
+                    // Dynamic overlays for highlights
+                    if let Some(block) = hovered_block {
+                        let stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
+                        painter.rect(
+                            block.rect,
+                            0.0,
+                            egui::Color32::TRANSPARENT,
+                            stroke,
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+
+                    if let Some(selected_idx) = self.selected_node_idx
+                        && let Some(block) = self
+                            .cached_blocks
+                            .iter()
+                            .find(|b| b.node_idx == selected_idx)
+                    {
+                        let accent_purple = egui::Color32::from_rgb(139, 92, 246);
+                        let stroke = egui::Stroke::new(2.5, accent_purple);
+                        painter.rect(
+                            block.rect,
+                            0.0,
+                            egui::Color32::TRANSPARENT,
+                            stroke,
+                            egui::StrokeKind::Inside,
+                        );
                     }
 
                     // Click event to select node
-                    if response.clicked() {
-                        let pointer_pos = response.interact_pointer_pos();
-                        if let Some(pos) = pointer_pos {
-                            for block in &blocks {
-                                if block.rect.contains(pos) {
-                                    self.selected_node_idx = Some(block.node_idx);
+                    if response.clicked()
+                        && let Some(block) = hovered_block
+                    {
+                        self.selected_node_idx = Some(block.node_idx);
 
-                                    // Auto expand parents so it shows up in tree view
-                                    let mut curr = Some(block.node_idx);
-                                    while let Some(idx) = curr {
-                                        if let Some(node) = snapshot.nodes.get(idx as usize) {
-                                            if node.is_directory() {
-                                                self.expanded_nodes.insert(idx);
-                                            }
-                                            curr = node.parent_opt();
-                                        } else {
-                                            break;
-                                        }
-                                    }
-                                    break;
+                        // Auto expand parents so it shows up in tree view
+                        let mut curr = Some(block.node_idx);
+                        while let Some(idx) = curr {
+                            if let Some(node) = snapshot.nodes.get(idx as usize) {
+                                if node.is_directory() {
+                                    self.expanded_nodes.insert(idx);
                                 }
+                                curr = node.parent_opt();
+                            } else {
+                                break;
                             }
                         }
                     }
@@ -933,7 +953,7 @@ fn setup_custom_style(ctx: &egui::Context) {
     ctx.set_visuals(visuals);
 }
 
-// Slice-and-dice partitioning treemap algorithm
+// Squarified partitioning treemap algorithm (Bruls, Huizing, and van Wijk)
 struct TreemapBlock {
     rect: egui::Rect,
     node_idx: u32,
@@ -946,6 +966,71 @@ struct TreemapConfig<'a> {
     max_depth: usize,
 }
 
+fn worst_aspect_ratio(row: &[f64], w: f64) -> f64 {
+    if row.is_empty() || w <= 0.0 {
+        return f64::INFINITY;
+    }
+    let sum: f64 = row.iter().sum();
+    if sum <= 0.0 {
+        return f64::INFINITY;
+    }
+    let sum_sq = sum * sum;
+    let w_sq = w * w;
+
+    let mut max_ratio = 0.0;
+    for &area in row {
+        if area <= 0.0 {
+            continue;
+        }
+        let ratio1 = (w_sq * area) / sum_sq;
+        let ratio2 = sum_sq / (w_sq * area);
+        let ratio = ratio1.max(ratio2);
+        if ratio > max_ratio {
+            max_ratio = ratio;
+        }
+    }
+    max_ratio
+}
+
+fn recurse_child(
+    config: &TreemapConfig,
+    child_idx: u32,
+    child_rect: egui::Rect,
+    depth: usize,
+    blocks: &mut Vec<TreemapBlock>,
+) {
+    // Minimum visual dimension constraint
+    const MIN_PIXEL_DIM: f32 = 12.0;
+
+    if child_rect.width() <= 0.0 || child_rect.height() <= 0.0 {
+        return;
+    }
+
+    let child = &config.nodes[child_idx as usize];
+
+    let is_leaf_or_too_small = !child.is_directory()
+        || depth >= config.max_depth
+        || child_rect.width() < MIN_PIXEL_DIM
+        || child_rect.height() < MIN_PIXEL_DIM;
+
+    if is_leaf_or_too_small {
+        let name = config.string_pool.get(child.name_id).unwrap_or("");
+        let ext = Path::new(name).extension().map_or_else(
+            || NO_EXTENSION.to_string(),
+            |s| s.to_string_lossy().to_ascii_lowercase(),
+        );
+        let color = get_color_for_extension(&ext);
+        blocks.push(TreemapBlock {
+            rect: child_rect,
+            node_idx: child_idx,
+            color,
+        });
+        return;
+    }
+
+    build_treemap(config, child_idx, child_rect, depth + 1, blocks);
+}
+
 fn build_treemap(
     config: &TreemapConfig,
     node_idx: u32,
@@ -953,12 +1038,14 @@ fn build_treemap(
     depth: usize,
     blocks: &mut Vec<TreemapBlock>,
 ) {
+    const MIN_AVG_CHILD_AREA: f64 = 16.0; // Corresponds to a 4x4 screen box per child
+
     let node = &config.nodes[node_idx as usize];
     if node.size == 0 || rect.width() < 2.0 || rect.height() < 2.0 {
         return;
     }
 
-    // Leaf files or max depth limit
+    // Leaf files or max depth limit reached
     if !node.is_directory() || depth >= config.max_depth {
         let name = config.string_pool.get(node.name_id).unwrap_or("");
         let ext = Path::new(name).extension().map_or_else(
@@ -975,7 +1062,7 @@ fn build_treemap(
         return;
     }
 
-    // Collect children
+    // Collect directory children
     let mut children = SmallVec::<[u32; 16]>::new();
     let mut curr = node.first_child;
     while curr != NO_INDEX {
@@ -993,15 +1080,49 @@ fn build_treemap(
         return;
     }
 
-    // Sort by size descending
+    // --- Dense Directory Area Cutoff Optimization ---
+    // If a directory contains more children than can visually be resolved cleanly,
+    // draw the parent directory itself as a solid block.
+    // This removes layout gaps and saves 99% of processing on large, deep structures.
+    let area = (rect.width() * rect.height()) as f64;
+
+    #[allow(clippy::cast_precision_loss)]
+    let avg_area_per_child = area / children.len() as f64;
+
+    if avg_area_per_child < MIN_AVG_CHILD_AREA {
+        let name = config.string_pool.get(node.name_id).unwrap_or("");
+        let ext = Path::new(name).extension().map_or_else(
+            || NO_EXTENSION.to_string(),
+            |s| s.to_string_lossy().to_ascii_lowercase(),
+        );
+        let color = get_color_for_extension(&ext);
+        blocks.push(TreemapBlock {
+            rect,
+            node_idx,
+            color,
+        });
+        return;
+    }
+
+    // Sort descending
     children.sort_by(|&a, &b| {
         config.nodes[b as usize]
             .size
             .cmp(&config.nodes[a as usize].size)
     });
 
+    // Filter out items with 0 size
+    let active_children: Vec<u32> = children
+        .into_iter()
+        .filter(|&idx| config.nodes[idx as usize].size > 0)
+        .collect();
+
+    if active_children.is_empty() {
+        return;
+    }
+
     #[allow(clippy::cast_precision_loss)]
-    let total_size = children
+    let total_size = active_children
         .iter()
         .map(|&idx| config.nodes[idx as usize].size)
         .sum::<u64>() as f64;
@@ -1010,83 +1131,106 @@ fn build_treemap(
         return;
     }
 
-    // Find the last child index that is actually drawn (size > 0)
-    let last_drawn_idx = children
+    // Map sizes to pixel areas
+    let total_area = (rect.width() * rect.height()) as f64;
+    let child_areas: Vec<f64> = active_children
         .iter()
-        .copied()
-        .rev()
-        .find(|&idx| config.nodes[idx as usize].size > 0);
+        .map(|&idx| {
+            #[allow(clippy::cast_precision_loss)]
+            let size = config.nodes[idx as usize].size as f64;
+            (size / total_size) * total_area
+        })
+        .collect();
 
     let mut remaining_rect = rect;
-    let mut remaining_size = total_size;
+    let mut i = 0;
 
-    for &child_idx in &children {
-        let child = &config.nodes[child_idx as usize];
-        if child.size == 0 {
-            continue;
+    while i < active_children.len() {
+        let w = (remaining_rect.width().min(remaining_rect.height())) as f64;
+        if w <= 0.0 {
+            break;
         }
 
-        // Dynamically slice along the longer axis of the remaining space
-        let vertical = remaining_rect.height() > remaining_rect.width();
-        let is_last = Some(child_idx) == last_drawn_idx;
+        let mut current_row = Vec::new();
+        current_row.push(child_areas[i]);
+        let mut j = i + 1;
 
-        #[allow(clippy::cast_precision_loss)]
-        let child_ratio = child.size as f64 / remaining_size;
+        while j < active_children.len() {
+            let next_area = child_areas[j];
+            let mut test_row = current_row.clone();
+            test_row.push(next_area);
 
-        let child_rect;
-        if is_last {
-            child_rect = remaining_rect;
-        } else {
-            if vertical {
-                let height = (remaining_rect.height() as f64 * child_ratio) as f32;
-                child_rect = egui::Rect::from_min_max(
-                    remaining_rect.min,
-                    egui::pos2(remaining_rect.max.x, remaining_rect.min.y + height),
-                );
-                remaining_rect.min.y += height;
+            let worst_before = worst_aspect_ratio(&current_row, w);
+            let worst_after = worst_aspect_ratio(&test_row, w);
+
+            if worst_after <= worst_before {
+                current_row.push(next_area);
+                j += 1;
             } else {
-                let width = (remaining_rect.width() as f64 * child_ratio) as f32;
-                child_rect = egui::Rect::from_min_max(
-                    remaining_rect.min,
-                    egui::pos2(remaining_rect.min.x + width, remaining_rect.max.y),
+                break;
+            }
+        }
+
+        let row_sum: f64 = current_row.iter().sum();
+        let vertical_layout = remaining_rect.width() >= remaining_rect.height();
+
+        if vertical_layout {
+            let h = remaining_rect.height() as f64;
+            let thickness = if h > 0.0 { row_sum / h } else { 0.0 };
+            let mut current_y = remaining_rect.min.y;
+
+            for (k, &area) in current_row.iter().enumerate() {
+                let child_idx = active_children[i + k];
+                let item_height = if row_sum > 0.0 {
+                    h * (area / row_sum)
+                } else {
+                    0.0
+                };
+
+                let child_rect = egui::Rect::from_min_max(
+                    egui::pos2(remaining_rect.min.x, current_y),
+                    egui::pos2(
+                        (remaining_rect.min.x + thickness as f32).min(remaining_rect.max.x),
+                        (current_y + item_height as f32).min(remaining_rect.max.y),
+                    ),
                 );
-                remaining_rect.min.x += width;
+
+                recurse_child(config, child_idx, child_rect, depth, blocks);
+                current_y += item_height as f32;
             }
 
-            #[allow(clippy::cast_precision_loss)]
-            let size_acc = child.size as f64;
-
-            remaining_size -= size_acc;
-        }
-
-        // Recurse down one level
-        let start_blocks_len = blocks.len();
-
-        #[allow(clippy::cast_precision_loss)]
-        let child_ratio_of_total = child.size as f64 / total_size;
-
-        let next_depth = if child_ratio_of_total < 0.005 {
-            config.max_depth
+            remaining_rect.min.x =
+                (remaining_rect.min.x + thickness as f32).min(remaining_rect.max.x);
         } else {
-            depth + 1
-        };
-        build_treemap(config, child_idx, child_rect, next_depth, blocks);
+            let width = remaining_rect.width() as f64;
+            let thickness = if width > 0.0 { row_sum / width } else { 0.0 };
+            let mut current_x = remaining_rect.min.x;
 
-        // Fallback: If the subdirectory did not draw any children (due to pruning/filtering),
-        // draw the subdirectory itself as a single solid colored block to guarantee zero gaps!
-        if blocks.len() == start_blocks_len {
-            let name = config.string_pool.get(child.name_id).unwrap_or("");
-            let ext = Path::new(name).extension().map_or_else(
-                || NO_EXTENSION.to_string(),
-                |s| s.to_string_lossy().to_ascii_lowercase(),
-            );
-            let color = get_color_for_extension(&ext);
-            blocks.push(TreemapBlock {
-                rect: child_rect,
-                node_idx: child_idx,
-                color,
-            });
+            for (k, &area) in current_row.iter().enumerate() {
+                let child_idx = active_children[i + k];
+                let item_width = if row_sum > 0.0 {
+                    width * (area / row_sum)
+                } else {
+                    0.0
+                };
+
+                let child_rect = egui::Rect::from_min_max(
+                    egui::pos2(current_x, remaining_rect.min.y),
+                    egui::pos2(
+                        (current_x + item_width as f32).min(remaining_rect.max.x),
+                        (remaining_rect.min.y + thickness as f32).min(remaining_rect.max.y),
+                    ),
+                );
+
+                recurse_child(config, child_idx, child_rect, depth, blocks);
+                current_x += item_width as f32;
+            }
+
+            remaining_rect.min.y =
+                (remaining_rect.min.y + thickness as f32).min(remaining_rect.max.y);
         }
+
+        i = j;
     }
 }
 

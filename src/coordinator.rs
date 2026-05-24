@@ -19,6 +19,8 @@ pub struct SharedState {
     pub current_snapshot: ArcSwap<FileArenaSnapshot>,
     /// Indicates whether the scanner is actively running
     pub is_scanning: Arc<AtomicBool>,
+    /// Background-computed live extension statistics (ext, `total_size`, `file_count`)
+    pub extension_stats: ArcSwap<Vec<(String, u64, u32)>>,
 }
 
 impl Default for SharedState {
@@ -37,6 +39,7 @@ impl SharedState {
         Self {
             current_snapshot: ArcSwap::new(Arc::new(initial_snapshot)),
             is_scanning: Arc::new(AtomicBool::new(false)),
+            extension_stats: ArcSwap::new(Arc::new(Vec::new())), // Initialize
         }
     }
 }
@@ -61,6 +64,10 @@ impl Coordinator {
 
         let mut arena = Vec::with_capacity(1024 * 1024); // Pre-allocate for ~1M nodes
         let mut string_pool = StringPool::new();
+
+        // Local extension tracking in the background thread
+        let mut ext_map: std::collections::HashMap<String, (u64, u32)> =
+            std::collections::HashMap::new();
 
         // Local to Global ID mapping: outer index is worker_id, inner is local_id.0
         let mut id_map: Vec<Vec<u32>> = Vec::new();
@@ -160,6 +167,15 @@ impl Coordinator {
                             // Propagate size upwards through parent indices
                             propagate_size(&mut arena, parent_global_id, size);
 
+                            // O(1) Background Live Extension Tracking
+                            let ext = std::path::Path::new(&name).extension().map_or_else(
+                                || "(no extension)".to_string(),
+                                |s| s.to_string_lossy().to_ascii_lowercase(),
+                            );
+                            let entry = ext_map.entry(ext).or_insert((0, 0));
+                            entry.0 += size;
+                            entry.1 += 1;
+
                             dirty = true;
                         }
                     }
@@ -173,6 +189,15 @@ impl Coordinator {
                     string_pool: Arc::new(string_pool.clone()),
                 };
                 self.shared_state.current_snapshot.store(Arc::new(snapshot));
+
+                // Publish background sorted statistics
+                let mut stats_vec: Vec<(String, u64, u32)> = ext_map
+                    .iter()
+                    .map(|(ext, &(total_size, file_count))| (ext.clone(), total_size, file_count))
+                    .collect();
+                stats_vec.sort_by_key(|b| std::cmp::Reverse(b.1));
+                self.shared_state.extension_stats.store(Arc::new(stats_vec));
+
                 last_publish = Instant::now();
                 dirty = false;
             }
@@ -184,6 +209,14 @@ impl Coordinator {
             string_pool: Arc::new(string_pool),
         };
         self.shared_state.current_snapshot.store(Arc::new(snapshot));
+
+        let mut stats_vec: Vec<(String, u64, u32)> = ext_map
+            .into_iter()
+            .map(|(ext, (total_size, file_count))| (ext, total_size, file_count))
+            .collect();
+        stats_vec.sort_by_key(|b| std::cmp::Reverse(b.1));
+        self.shared_state.extension_stats.store(Arc::new(stats_vec));
+
         self.shared_state.is_scanning.store(false, Ordering::SeqCst);
     }
 }
