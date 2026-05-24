@@ -818,6 +818,14 @@ impl eframe::App for GuiApp {
                     ui.separator();
                     ui.label(format!("Path: {}", path.display()));
                 }
+
+                // --- Right-Aligned Concurrency Badge ---
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let threads = self.traversal_engine.num_threads();
+                    let badge_text = format!("⚡ {threads} Worker Threads");
+                    ui.colored_label(crate::colors::GLOW_INNER_CORE, badge_text)
+                        .on_hover_text("The number of parallel, work-stealing CPU cores allocated for directory traversal.");
+                });
             });
         });
 

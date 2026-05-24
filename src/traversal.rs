@@ -93,6 +93,11 @@ impl TraversalEngine {
         &self.stats
     }
 
+    #[must_use]
+    pub const fn num_threads(&self) -> usize {
+        self.num_threads
+    }
+
     pub fn start_traversal(
         &self,
         root_path: PathBuf,
