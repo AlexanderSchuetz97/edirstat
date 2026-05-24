@@ -1,3 +1,4 @@
+pub mod size_distribution;
 pub mod treemap;
 
 pub trait StatsChart {

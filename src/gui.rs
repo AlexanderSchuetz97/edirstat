@@ -1,11 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
+    ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
 
 use eframe::egui;
+use egui_plot::{AxisHints, GridMark, Plot};
 use rfd::FileDialog;
 use smallvec::SmallVec;
 
@@ -14,6 +16,7 @@ use super::{
     colors,
     coordinator::SharedState,
     persistence::{load_snapshot, save_snapshot},
+    stats::StatsChart as _,
     traversal::TraversalEngine,
 };
 
@@ -21,6 +24,17 @@ use super::{
 enum ActiveModal {
     Delete,
     About,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisMode {
+    Treemap,
+    Plots,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlotType {
+    SizeDistribution,
 }
 
 pub struct GuiApp {
@@ -32,6 +46,10 @@ pub struct GuiApp {
     expanded_nodes: HashSet<u32>,
     search_query: String,
     monospace_paths: bool,
+
+    // Visualization tabs
+    vis_mode: VisMode,
+    plot_type: PlotType,
 
     // Modal states
     delete_confirm_checked: bool,
@@ -72,6 +90,8 @@ impl GuiApp {
             expanded_nodes: HashSet::new(),
             search_query: String::new(),
             monospace_paths: false,
+            vis_mode: VisMode::Treemap,
+            plot_type: PlotType::SizeDistribution,
             delete_confirm_checked: false,
             delete_node_idx: None,
             active_modal: None,
@@ -129,6 +149,60 @@ impl GuiApp {
             self.delete_node_idx = self.selected_node_idx;
             ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
         }
+    }
+
+    fn render_size_distribution_plot(ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        let mut chart_gen = crate::stats::size_distribution::SizeDistributionChart;
+        let bar_chart = chart_gen.compute(snapshot);
+
+        let formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
+            let labels = [
+                "< 10 KB",
+                "10 KB - 100 KB",
+                "100 KB - 1 MB",
+                "1 MB - 10 MB",
+                "10 MB - 100 MB",
+                "100 MB - 1 GB",
+                "1 GB - 10 GB",
+                "> 10 GB",
+            ];
+            let val = mark.value.round() as usize;
+            if val < labels.len() {
+                labels[val].to_string()
+            } else {
+                String::new()
+            }
+        };
+
+        let x_grid = |_input: egui_plot::GridInput| {
+            let mut marks = vec![];
+            for i in 0..8 {
+                marks.push(GridMark {
+                    value: i as f64,
+                    step_size: 1.0,
+                });
+            }
+            marks
+        };
+
+        let x_axes = vec![
+            AxisHints::new_x()
+                .label("File Size Bracket")
+                .formatter(formatter),
+        ];
+
+        let plot = Plot::new("size_dist_plot")
+            .height(ui.available_height() - 10.0)
+            .custom_x_axes(x_axes)
+            .x_grid_spacer(x_grid)
+            .y_axis_label("File Count")
+            .allow_zoom(false)
+            .allow_drag(false)
+            .allow_scroll(false);
+
+        plot.show(ui, |plot_ui| {
+            plot_ui.bar_chart(bar_chart);
+        });
     }
 }
 
@@ -501,198 +575,235 @@ impl eframe::App for GuiApp {
                 });
             });
 
-        // Central Panel - Canvas visual Treemap
+        // Central Panel - Canvas visual Treemap / Plot Panel
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical(|ui| {
-                ui.heading(
-                    egui::RichText::new("📊 Treemap Visualization")
-                        .strong()
-                        .color(ui.visuals().strong_text_color()),
-                );
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.vis_mode, VisMode::Treemap, "🗺 Treemap");
+                    ui.selectable_value(&mut self.vis_mode, VisMode::Plots, "📈 Plots");
+                });
                 ui.separator();
 
-                if snapshot.nodes.is_empty() {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("Scanned filesystem will be visualized as a treemap here.");
-                    });
-                } else {
-                    let available_rect = ui.available_rect_before_wrap();
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(available_rect.width(), available_rect.height() - 20.0),
-                        egui::Sense::click_and_drag(),
+                if self.vis_mode == VisMode::Treemap {
+                    ui.heading(
+                        egui::RichText::new("📊 Treemap Visualization")
+                            .strong()
+                            .color(ui.visuals().strong_text_color()),
                     );
+                    ui.separator();
 
-                    // --- Layout Cache Check ---
-                    let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
-                    let needs_rebuild = self.cached_blocks.is_empty()
-                        || snapshot_ptr != self.last_snapshot_ptr
-                        || rect != self.last_rect;
+                    if snapshot.nodes.is_empty() {
+                        ui.centered_and_justified(|ui| {
+                            ui.label("Scanned filesystem will be visualized as a treemap here.");
+                        });
+                    } else {
+                        let available_rect = ui.available_rect_before_wrap();
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(available_rect.width(), available_rect.height() - 20.0),
+                            egui::Sense::click_and_drag(),
+                        );
 
-                    if needs_rebuild {
-                        use crate::stats::StatsChart;
-                        let mut chart = crate::stats::treemap::TreemapChart::new(rect);
-                        self.cached_blocks = chart.compute(&snapshot);
-                        self.last_snapshot_ptr = snapshot_ptr;
-                        self.last_rect = rect;
-                    }
+                        // --- Layout Cache Check ---
+                        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
+                        let needs_rebuild = self.cached_blocks.is_empty()
+                            || snapshot_ptr != self.last_snapshot_ptr
+                            || rect != self.last_rect;
 
-                    let painter = ui.painter_at(rect);
-                    let mut hovered_block = None;
-                    let hover_pos = response.hover_pos();
-
-                    // Look up hovered block (O(M) linear search is fast on layout blocks in Rust)
-                    if let Some(pos) = hover_pos {
-                        for block in &self.cached_blocks {
-                            if block.rect.contains(pos) {
-                                hovered_block = Some(block);
-                                break;
-                            }
+                        if needs_rebuild {
+                            use crate::stats::StatsChart;
+                            let mut chart = crate::stats::treemap::TreemapChart::new(rect);
+                            self.cached_blocks = chart.compute(&snapshot);
+                            self.last_snapshot_ptr = snapshot_ptr;
+                            self.last_rect = rect;
                         }
-                    }
 
-                    // GPU Batching: Consolidate static blocks into exactly ONE single mesh submission to the GPU
-                    let mut combined_mesh = egui::Mesh::default();
-                    for block in &self.cached_blocks {
-                        let fill_color = block.color;
-                        let color_light = fill_color.linear_multiply(1.15);
-                        let color_dark = fill_color.linear_multiply(0.75);
+                        let painter = ui.painter_at(rect);
+                        let mut hovered_block = None;
+                        let hover_pos = response.hover_pos();
 
-                        let base_vertex_idx = combined_mesh.vertices.len() as u32;
-
-                        combined_mesh.vertices.push(egui::epaint::Vertex {
-                            pos: block.rect.left_top(),
-                            uv: egui::epaint::WHITE_UV,
-                            color: color_light,
-                        });
-                        combined_mesh.vertices.push(egui::epaint::Vertex {
-                            pos: block.rect.right_top(),
-                            uv: egui::epaint::WHITE_UV,
-                            color: color_light,
-                        });
-                        combined_mesh.vertices.push(egui::epaint::Vertex {
-                            pos: block.rect.right_bottom(),
-                            uv: egui::epaint::WHITE_UV,
-                            color: color_dark,
-                        });
-                        combined_mesh.vertices.push(egui::epaint::Vertex {
-                            pos: block.rect.left_bottom(),
-                            uv: egui::epaint::WHITE_UV,
-                            color: color_dark,
-                        });
-
-                        combined_mesh.add_triangle(
-                            base_vertex_idx,
-                            base_vertex_idx + 1,
-                            base_vertex_idx + 2,
-                        );
-                        combined_mesh.add_triangle(
-                            base_vertex_idx,
-                            base_vertex_idx + 2,
-                            base_vertex_idx + 3,
-                        );
-                    }
-
-                    painter.add(combined_mesh);
-
-                    // Dynamic overlays for highlights
-                    if let Some(block) = hovered_block {
-                        let stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-                        painter.rect(
-                            block.rect,
-                            0.0,
-                            egui::Color32::TRANSPARENT,
-                            stroke,
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-
-                    if let Some(selected_idx) = self.selected_node_idx {
-                        // Reconstruct the bounding box union of all blocks belonging to the selection.
-                        // For a file, this yields its individual rect. For a directory, it yields the
-                        // exact unified rect of its visible children on-screen.
-                        let mut target_rect: Option<egui::Rect> = None;
-                        for block in &self.cached_blocks {
-                            if crate::stats::treemap::is_descendant(
-                                &snapshot.nodes,
-                                block.node_idx,
-                                selected_idx,
-                            ) {
-                                match target_rect {
-                                    None => target_rect = Some(block.rect),
-                                    Some(ref mut r) => *r = r.union(block.rect),
+                        // Look up hovered block (O(M) linear search is fast on layout blocks in Rust)
+                        if let Some(pos) = hover_pos {
+                            for block in &self.cached_blocks {
+                                if block.rect.contains(pos) {
+                                    hovered_block = Some(block);
+                                    break;
                                 }
                             }
                         }
 
-                        if let Some(rect) = target_rect {
-                            let time = ui.input(|i| i.time);
+                        // GPU Batching: Consolidate static blocks into exactly ONE single mesh submission to the GPU
+                        let mut combined_mesh = egui::Mesh::default();
+                        for block in &self.cached_blocks {
+                            let fill_color = block.color;
+                            let color_light = fill_color.linear_multiply(1.15);
+                            let color_dark = fill_color.linear_multiply(0.75);
 
-                            // A wave factor oscillating smoothly between 0.0 and 1.0 (approx. 1Hz frequency)
-                            let pulse = 0.5f64.mul_add((time * 6.0).sin(), 0.5);
+                            let base_vertex_idx = combined_mesh.vertices.len() as u32;
 
-                            // 1. Draw Outer Expanding Glow (grows and fades)
-                            let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
-                            let glow_color =
-                                crate::colors::GLOW_OUTER_BASE.linear_multiply(glow_alpha as f32);
-                            let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
-                            painter.rect(
-                                rect,
-                                0.0,
-                                egui::Color32::TRANSPARENT,
-                                egui::Stroke::new(glow_thickness, glow_color),
-                                egui::StrokeKind::Outside,
+                            combined_mesh.vertices.push(egui::epaint::Vertex {
+                                pos: block.rect.left_top(),
+                                uv: egui::epaint::WHITE_UV,
+                                color: color_light,
+                            });
+                            combined_mesh.vertices.push(egui::epaint::Vertex {
+                                pos: block.rect.right_top(),
+                                uv: egui::epaint::WHITE_UV,
+                                color: color_light,
+                            });
+                            combined_mesh.vertices.push(egui::epaint::Vertex {
+                                pos: block.rect.right_bottom(),
+                                uv: egui::epaint::WHITE_UV,
+                                color: color_dark,
+                            });
+                            combined_mesh.vertices.push(egui::epaint::Vertex {
+                                pos: block.rect.left_bottom(),
+                                uv: egui::epaint::WHITE_UV,
+                                color: color_dark,
+                            });
+
+                            combined_mesh.add_triangle(
+                                base_vertex_idx,
+                                base_vertex_idx + 1,
+                                base_vertex_idx + 2,
                             );
+                            combined_mesh.add_triangle(
+                                base_vertex_idx,
+                                base_vertex_idx + 2,
+                                base_vertex_idx + 3,
+                            );
+                        }
 
-                            // 2. Draw Inner Sharp Contrast Core (stays crisp)
-                            let core_color = crate::colors::GLOW_INNER_CORE; // Soft pastel purple/violet
-                            let core_thickness = 1.0f32.mul_add(pulse as f32, 1.5);
+                        painter.add(combined_mesh);
+
+                        // Dynamic overlays for highlights
+                        if let Some(block) = hovered_block {
+                            let stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
                             painter.rect(
-                                rect,
+                                block.rect,
                                 0.0,
                                 egui::Color32::TRANSPARENT,
-                                egui::Stroke::new(core_thickness, core_color),
+                                stroke,
                                 egui::StrokeKind::Inside,
                             );
                         }
-                    }
 
-                    // Click event to select node
-                    if response.clicked()
-                        && let Some(block) = hovered_block
-                    {
-                        self.selected_node_idx = Some(block.node_idx);
-                        self.scroll_to_selected = true; // Raise scroll trigger
-
-                        // Auto expand parents so it shows up in tree view
-                        let mut curr = Some(block.node_idx);
-                        while let Some(idx) = curr {
-                            if let Some(node) = snapshot.nodes.get(idx as usize) {
-                                if node.is_directory() {
-                                    self.expanded_nodes.insert(idx);
+                        if let Some(selected_idx) = self.selected_node_idx {
+                            // Reconstruct the bounding box union of all blocks belonging to the selection.
+                            // For a file, this yields its individual rect. For a directory, it yields the
+                            // exact unified rect of its visible children on-screen.
+                            let mut target_rect: Option<egui::Rect> = None;
+                            for block in &self.cached_blocks {
+                                if crate::stats::treemap::is_descendant(
+                                    &snapshot.nodes,
+                                    block.node_idx,
+                                    selected_idx,
+                                ) {
+                                    match target_rect {
+                                        None => target_rect = Some(block.rect),
+                                        Some(ref mut r) => *r = r.union(block.rect),
+                                    }
                                 }
-                                curr = node.parent_opt();
-                            } else {
-                                break;
+                            }
+
+                            if let Some(rect) = target_rect {
+                                let time = ui.input(|i| i.time);
+
+                                // A wave factor oscillating smoothly between 0.0 and 1.0 (approx. 1Hz frequency)
+                                let pulse = 0.5f64.mul_add((time * 6.0).sin(), 0.5);
+
+                                // 1. Draw Outer Expanding Glow (grows and fades)
+                                let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
+                                let glow_color = crate::colors::GLOW_OUTER_BASE
+                                    .linear_multiply(glow_alpha as f32);
+                                let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
+                                painter.rect(
+                                    rect,
+                                    0.0,
+                                    egui::Color32::TRANSPARENT,
+                                    egui::Stroke::new(glow_thickness, glow_color),
+                                    egui::StrokeKind::Outside,
+                                );
+
+                                // 2. Draw Inner Sharp Contrast Core (stays crisp)
+                                let core_color = crate::colors::GLOW_INNER_CORE; // Soft pastel purple/violet
+                                let core_thickness = 1.0f32.mul_add(pulse as f32, 1.5);
+                                painter.rect(
+                                    rect,
+                                    0.0,
+                                    egui::Color32::TRANSPARENT,
+                                    egui::Stroke::new(core_thickness, core_color),
+                                    egui::StrokeKind::Inside,
+                                );
                             }
                         }
-                    }
 
-                    // Draw tooltip
-                    if let Some(block) = hovered_block {
-                        let path_str = snapshot.get_full_path(block.node_idx);
-                        let size_str = prettier_bytes::ByteFormatter::new()
-                            .format(snapshot.nodes[block.node_idx as usize].size)
-                            .to_string();
-                        egui::Tooltip::always_open(
-                            ctx.clone(),
-                            ui.layer_id(),
-                            egui::Id::new("treemap_tooltip"),
-                            egui::PopupAnchor::Pointer,
-                        )
-                        .show(|ui| {
-                            ui.label(format!("📁 {path_str}"));
-                            ui.label(format!("💾 Size: {size_str}"));
+                        // Click event to select node
+                        if response.clicked()
+                            && let Some(block) = hovered_block
+                        {
+                            self.selected_node_idx = Some(block.node_idx);
+                            self.scroll_to_selected = true; // Raise scroll trigger
+
+                            // Auto expand parents so it shows up in tree view
+                            let mut curr = Some(block.node_idx);
+                            while let Some(idx) = curr {
+                                if let Some(node) = snapshot.nodes.get(idx as usize) {
+                                    if node.is_directory() {
+                                        self.expanded_nodes.insert(idx);
+                                    }
+                                    curr = node.parent_opt();
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Draw tooltip
+                        if let Some(block) = hovered_block {
+                            let path_str = snapshot.get_full_path(block.node_idx);
+                            let size_str = prettier_bytes::ByteFormatter::new()
+                                .format(snapshot.nodes[block.node_idx as usize].size)
+                                .to_string();
+                            egui::Tooltip::always_open(
+                                ctx.clone(),
+                                ui.layer_id(),
+                                egui::Id::new("treemap_tooltip"),
+                                egui::PopupAnchor::Pointer,
+                            )
+                            .show(|ui| {
+                                ui.label(format!("📁 {path_str}"));
+                                ui.label(format!("💾 Size: {size_str}"));
+                            });
+                        }
+                    }
+                } else {
+                    // Plots rendering block
+                    ui.horizontal(|ui| {
+                        ui.label("Select Plot:");
+                        egui::ComboBox::from_id_salt("plot_type_combo")
+                            .selected_text(match self.plot_type {
+                                PlotType::SizeDistribution => "📊 File Size Distribution",
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.plot_type,
+                                    PlotType::SizeDistribution,
+                                    "📊 File Size Distribution",
+                                );
+                            });
+                    });
+                    ui.separator();
+
+                    if snapshot.nodes.is_empty() {
+                        ui.centered_and_justified(|ui| {
+                            ui.label("Scanned filesystem will be plotted here.");
                         });
+                    } else {
+                        match self.plot_type {
+                            PlotType::SizeDistribution => {
+                                Self::render_size_distribution_plot(ui, &snapshot);
+                            }
+                        }
                     }
                 }
             });
