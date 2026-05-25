@@ -277,7 +277,7 @@ impl eframe::App for GuiApp {
                     }
 
                     ui.separator();
-                    if ui.button("🗂 Collapse All").clicked() {
+                    if ui.button("⏏ Collapse All").clicked() {
                         self.expanded_nodes.clear();
                         ui.close_kind(egui::UiKind::Menu);
                     }
