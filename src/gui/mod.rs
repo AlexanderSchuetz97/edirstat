@@ -253,9 +253,12 @@ impl eframe::App for GuiApp {
                         }
                         let response = ui.horizontal(|ui| {
                             ui.label(egui::RichText::new("🅰").size(12.0));
-                            ui.label("Monospace Paths");
+                            ui.label(
+                                egui::RichText::new("Monospace Paths")
+                                    .color(ui.visuals().widgets.inactive.text_color()),
+                            );
                         }).response;
-
+                        
                         let label_click = ui.interact(response.rect, ui.id().with("monospace_label"), egui::Sense::click());
                         if label_click.clicked() {
                             self.monospace_paths = !self.monospace_paths;
