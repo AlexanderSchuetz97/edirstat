@@ -7,22 +7,22 @@ use std::{
 
 use eframe::egui;
 use rfd::FileDialog;
-use smallvec::SmallVec;
 
 use super::{
-    arena::{FileArenaSnapshot, NO_EXTENSION, NO_INDEX},
-    colors,
+    arena::{FileArenaSnapshot, NO_EXTENSION},
     coordinator::SharedState,
     persistence::{load_snapshot, save_snapshot},
     stats::{self, StatComponent as _},
     traversal::TraversalEngine,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ActiveModal {
-    Delete,
-    About,
-}
+pub mod explorer;
+pub mod extensions;
+pub mod modals;
+pub mod theme;
+
+pub use extensions::ExtensionStat;
+pub use modals::ActiveModal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisMode {
@@ -40,53 +40,47 @@ pub enum PlotType {
 }
 
 pub struct GuiApp {
-    shared_state: Arc<SharedState>,
-    traversal_engine: Arc<TraversalEngine>,
+    pub(crate) shared_state: Arc<SharedState>,
+    pub(crate) traversal_engine: Arc<TraversalEngine>,
 
     // UI state
-    selected_node_idx: Option<u32>,
-    expanded_nodes: HashSet<u32>,
-    search_query: String,
-    monospace_paths: bool,
+    pub(crate) selected_node_idx: Option<u32>,
+    pub(crate) expanded_nodes: HashSet<u32>,
+    pub(crate) search_query: String,
+    pub(crate) monospace_paths: bool,
 
     // Visualization tabs
-    vis_mode: VisMode,
-    plot_type: PlotType,
+    pub(crate) vis_mode: VisMode,
+    pub(crate) plot_type: PlotType,
 
     // Analytics components
-    treemap_chart: stats::treemap::TreemapChart,
-    size_dist_chart: stats::size_distribution::SizeDistributionChart,
-    scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
-    dir_comp_chart: stats::dir_composition::DirCompositionChart,
-    boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart,
-    timeline_chart: stats::temporal_timeline::TemporalTimelineChart,
+    pub(crate) treemap_chart: stats::treemap::TreemapChart,
+    pub(crate) size_dist_chart: stats::size_distribution::SizeDistributionChart,
+    pub(crate) scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
+    pub(crate) dir_comp_chart: stats::dir_composition::DirCompositionChart,
+    pub(crate) boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart,
+    pub(crate) timeline_chart: stats::temporal_timeline::TemporalTimelineChart,
 
     // Modal states
-    delete_confirm_checked: bool,
-    delete_node_idx: Option<u32>,
-    active_modal: Option<ActiveModal>,
+    pub(crate) delete_confirm_checked: bool,
+    pub(crate) delete_node_idx: Option<u32>,
+    pub(crate) active_modal: Option<ActiveModal>,
 
     // Saved scan parameters
-    current_scan_path: Option<PathBuf>,
-    scan_start_time: Option<Instant>,
-    total_scan_duration: Option<Duration>,
+    pub(crate) current_scan_path: Option<PathBuf>,
+    pub(crate) scan_start_time: Option<Instant>,
+    pub(crate) total_scan_duration: Option<Duration>,
 
     // Extension breakdown stats
-    extension_stats: Vec<ExtensionStat>,
-    last_extension_update: Option<Instant>,
+    pub(crate) extension_stats: Vec<ExtensionStat>,
+    pub(crate) last_extension_update: Option<Instant>,
 
     // Single-use trigger to automatically scroll the list view to the target row
-    scroll_to_selected: bool,
-}
-
-struct ExtensionStat {
-    ext: String,
-    total_size: u64,
-    file_count: u32,
-    color: egui::Color32,
+    pub(crate) scroll_to_selected: bool,
 }
 
 impl GuiApp {
+    #[must_use]
     pub fn new(shared_state: Arc<SharedState>, traversal_engine: Arc<TraversalEngine>) -> Self {
         Self {
             shared_state,
@@ -135,7 +129,11 @@ impl GuiApp {
     }
 
     /// Renders the shared "File" actions used in both the top toolbar and node context menus.
-    fn draw_file_menu_contents(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+    pub(crate) fn draw_file_menu_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &FileArenaSnapshot,
+    ) {
         let has_selection = self.selected_node_idx.is_some();
 
         let open_btn = ui.add_enabled(has_selection, egui::Button::new("🗁 Open in File Manager"));
@@ -179,7 +177,7 @@ impl eframe::App for GuiApp {
         }
 
         // Apply dark, premium glassmorphism-inspired style
-        setup_custom_style(&ctx);
+        theme::setup_custom_style(&ctx);
 
         // Top Control Panel
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
@@ -296,9 +294,9 @@ impl eframe::App for GuiApp {
                 // Live status display
                 if is_scanning {
                     ui.spinner();
-                    ui.colored_label(crate::colors::COLOR_SCANNING, "Scanning Disk...");
+                    ui.colored_label(theme::COLOR_SCANNING, "Scanning Disk...");
                 } else if self.current_scan_path.is_some() {
-                    ui.colored_label(crate::colors::COLOR_SCAN_COMPLETE, "Scan Complete");
+                    ui.colored_label(theme::COLOR_SCAN_COMPLETE, "Scan Complete");
                 } else {
                     ui.label("Idle");
                 }
@@ -312,7 +310,7 @@ impl eframe::App for GuiApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let threads = self.traversal_engine.num_threads();
                     let badge_text = format!("⚡ {threads} Worker Threads");
-                    ui.colored_label(crate::colors::GLOW_INNER_CORE, badge_text)
+                    ui.colored_label(theme::GLOW_INNER_CORE, badge_text)
                         .on_hover_text("The number of parallel, work-stealing CPU cores allocated for directory traversal.");
                 });
             });
@@ -467,79 +465,7 @@ impl eframe::App for GuiApp {
             });
 
         // Right Panel - Extension statistics
-        egui::Panel::right("right_panel")
-            .resizable(true)
-            .size_range(80.0..=250.0)
-            .default_size(210.0)
-            .show_inside(ui, |ui| {
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                ui.vertical(|ui| {
-                    ui.heading(
-                        egui::RichText::new("📂 Extensions")
-                            .strong()
-                            .color(ui.visuals().strong_text_color()),
-                    );
-                    ui.separator();
-
-                    // Map the pre-computed/pre-sorted stats vector from our background thread
-                    let shared_ext_stats = self.shared_state.extension_stats.load();
-                    if !shared_ext_stats.is_empty() {
-                        self.extension_stats = shared_ext_stats
-                            .iter()
-                            .map(|(ext, total_size, file_count)| ExtensionStat {
-                                ext: ext.clone(),
-                                total_size: *total_size,
-                                file_count: *file_count,
-                                color: colors::get_color_for_extension(ext),
-                            })
-                            .collect();
-                    }
-
-                    if self.extension_stats.is_empty() {
-                        ui.label("No statistics gathered yet.");
-                    } else {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            for stat in &self.extension_stats {
-                                ui.horizontal(|ui| {
-                                    // Colored dot
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(10.0, 10.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().circle_filled(rect.center(), 5.0, stat.color);
-
-                                    // Allocate name width and truncate it
-                                    let name_width = (ui.available_width() - 65.0).max(10.0);
-                                    ui.allocate_ui(
-                                        egui::vec2(name_width, ui.spacing().interact_size.y),
-                                        |ui| {
-                                            ui.style_mut().wrap_mode =
-                                                Some(egui::TextWrapMode::Truncate);
-
-                                            // Render the label and attach a hover tooltip showing file count
-                                            ui.label(&stat.ext).on_hover_text(format!(
-                                                "Files: {}",
-                                                stat.file_count
-                                            ));
-                                        },
-                                    );
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.label(
-                                                prettier_bytes::ByteFormatter::new()
-                                                    .format(stat.total_size)
-                                                    .to_string(),
-                                            );
-                                        },
-                                    );
-                                });
-                            }
-                        });
-                    }
-                });
-            });
+        self.render_extension_panel(ui);
 
         // Central Panel - Canvas visual Treemap / Plot Panel
         egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -642,322 +568,7 @@ impl eframe::App for GuiApp {
             });
         });
 
-        // Render Permanent Deletion Modal Popup
-        if self.active_modal == Some(ActiveModal::Delete) {
-            let idx_opt = self.delete_node_idx;
-            if let Some(idx) = idx_opt {
-                let path_str = snapshot.get_full_path(idx);
-                let size_str = prettier_bytes::ByteFormatter::new()
-                    .format(snapshot.nodes[idx as usize].size)
-                    .to_string();
-
-                let mut open = true;
-                egui::Window::new("⚠ PERMANENT DELETION WARNING")
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .collapsible(false)
-                    .resizable(false)
-                    .open(&mut open)
-                    .frame(egui::Frame::window(ui.style()).stroke(egui::Stroke::new(2.0, crate::colors::DELETION_BORDER))) // Thick red border outline
-                    .show(&ctx, |ui| {
-                        ui.vertical(|ui| {
-                            let path = std::path::Path::new(&path_str);
-                            if path.exists() {
-                                ui.heading(
-                                    egui::RichText::new("⚠ Permanent Deletion Warning!")
-                                        .color(crate::colors::DELETION_WARNING)
-                                        .strong()
-                                );
-                                ui.separator();
-
-                                ui.label("You are about to permanently delete the following path:");
-                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
-                                ui.label(format!("Total Size: {size_str}"));
-                                ui.separator();
-
-                                ui.label("This is a recursive deletion. All files, folders, and subdirectories under this path will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).");
-                                ui.add_space(8.0);
-
-                                ui.checkbox(&mut self.delete_confirm_checked, "I understand that files will be permanently deleted and cannot be recovered.");
-                                ui.add_space(8.0);
-
-                                ui.horizontal(|ui| {
-                                    if ui.button("Cancel").clicked() {
-                                        self.active_modal = None;
-                                    }
-
-                                    // Red confirm button
-                                    let confirm_btn = egui::Button::new(
-                                        egui::RichText::new("🗑 Yes, Delete Permanently")
-                                            .color(egui::Color32::WHITE)
-                                            .strong()
-                                    ).fill(crate::colors::DELETION_BORDER);
-
-                                    let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
-                                    if confirm_res.clicked() {
-                                        let path = std::path::Path::new(&path_str);
-                                        if path.exists() {
-                                            let delete_result = if path.is_dir() {
-                                                std::fs::remove_dir_all(path)
-                                            } else {
-                                                std::fs::remove_file(path)
-                                            };
-
-                                            if let Err(e) = delete_result {
-                                                println!("Failed to delete path: {e}");
-                                            } else {
-                                                // Reset selection upon deletion
-                                                self.selected_node_idx = None;
-                                            }
-                                        }
-                                        self.active_modal = None;
-                                    }
-                                });
-                            } else {
-                                ui.heading(
-                                    egui::RichText::new("❌ Path Does Not Exist!")
-                                        .color(crate::colors::DELETION_WARNING)
-                                        .strong()
-                                );
-                                ui.separator();
-                                ui.label("Error: The path you are trying to delete does not exist on disk.");
-                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
-                                ui.add_space(8.0);
-                                if ui.button("Close").clicked() {
-                                    self.active_modal = None;
-                                }
-                            }
-                        });
-                    });
-                if !open {
-                    self.active_modal = None;
-                }
-            }
-        }
-
-        // Render Help -> About Modal Popup
-        if self.active_modal == Some(ActiveModal::About) {
-            let mut open = true;
-            egui::Window::new("ℹ About eDirStat")
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .collapsible(false)
-                .resizable(false)
-                .open(&mut open)
-                .show(&ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.heading(
-                            egui::RichText::new("eDirStat 👷")
-                                .strong()
-                                .color(ui.visuals().strong_text_color())
-                        );
-                        ui.label(concat!("v", env!("CARGO_PKG_VERSION")));
-                        ui.separator();
-                        ui.label("By: Cody Wyatt Neiman (xangelix) <".to_owned() + "neiman" + "@" + "cody.to>");
-                        ui.add_space(8.0);
-                        ui.label("A modern, zero-copy, highly performant disk usage analyzer written in Rust.");
-                        ui.label("Features dynamic work-stealing multithreaded directory walking, lazy explorer sibling sorting, zero-copy persistent memory mapping, HSL treemap gradients, and instant virtual rendering.");
-                        ui.add_space(8.0);
-                        if ui.button("Close").clicked() {
-                            self.active_modal = None;
-                        }
-                    });
-                });
-            if !open {
-                self.active_modal = None;
-            }
-        }
+        // Render any active modals
+        self.render_modals(&ctx, &snapshot);
     }
-}
-
-impl GuiApp {
-    fn flatten_visible_tree(
-        &mut self,
-        snapshot: &FileArenaSnapshot,
-        node_idx: u32,
-        indent_level: usize,
-        out: &mut Vec<(u32, usize)>,
-    ) {
-        let node = &snapshot.nodes[node_idx as usize];
-        let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
-
-        // Filter search query
-        if !self.search_query.is_empty() {
-            let matches_query = name
-                .to_lowercase()
-                .contains(&self.search_query.to_lowercase());
-            // If it's a file and doesn't match, skip
-            if !node.is_directory() && !matches_query {
-                return;
-            }
-        }
-
-        out.push((node_idx, indent_level));
-
-        let is_expanded = self.expanded_nodes.contains(&node_idx);
-        let has_children = node.is_directory() && node.first_child != NO_INDEX;
-
-        if is_expanded && has_children {
-            let mut sorted_child_indices = SmallVec::<[u32; 16]>::new();
-            let mut curr = node.first_child;
-            while curr != NO_INDEX {
-                sorted_child_indices.push(curr);
-                curr = snapshot.nodes[curr as usize].next_sibling;
-            }
-            // Sort immediate children by size descending dynamically for 100% correct tree views
-            sorted_child_indices.sort_by(|&a, &b| {
-                snapshot.nodes[b as usize]
-                    .size
-                    .cmp(&snapshot.nodes[a as usize].size)
-            });
-
-            for &child_idx in &sorted_child_indices {
-                self.flatten_visible_tree(snapshot, child_idx, indent_level + 1, out);
-            }
-        }
-    }
-
-    fn render_tree_node_row(
-        &mut self,
-        ui: &mut egui::Ui,
-        snapshot: &FileArenaSnapshot,
-        node_idx: u32,
-        indent_level: usize,
-    ) {
-        let node = &snapshot.nodes[node_idx as usize];
-        let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
-
-        let is_expanded = self.expanded_nodes.contains(&node_idx);
-        let has_children = node.is_directory() && node.first_child != NO_INDEX;
-        let is_selected = self.selected_node_idx == Some(node_idx);
-
-        let horizontal_res = ui.horizontal(|ui| {
-            // Indent padding
-            #[allow(clippy::cast_precision_loss)]
-            ui.add_space(indent_level as f32 * 16.0);
-
-            // Icon & Expand Arrow
-            let icon_text = if node.is_symlink() {
-                "🔗"
-            } else if node.is_directory() {
-                "📁"
-            } else {
-                "📄"
-            };
-
-            if has_children {
-                let arrow = if is_expanded { "[-]" } else { "[+]" };
-                let rich_arrow = egui::RichText::new(arrow).monospace();
-                let label = ui.selectable_label(is_expanded, rich_arrow);
-                if label.clicked() {
-                    if is_expanded {
-                        self.expanded_nodes.remove(&node_idx);
-                    } else {
-                        self.expanded_nodes.insert(node_idx);
-                    }
-                }
-            } else {
-                ui.add_space(22.0); // Arrow placeholder alignment space matching "[+]"
-            }
-
-            ui.label(icon_text);
-
-            // Node Name / Label with automatic left-aligned truncation
-            let mut rich_name = egui::RichText::new(name);
-            if self.monospace_paths {
-                rich_name = rich_name.monospace();
-            }
-            if is_selected {
-                rich_name = rich_name
-                    .strong()
-                    .color(ui.visuals().selection.stroke.color);
-            }
-
-            // Allocate exactly the remaining width minus space for the size column (72px subtracted)
-            let name_width = (ui.available_width() - 72.0).max(50.0);
-
-            ui.allocate_ui(egui::vec2(name_width, ui.spacing().interact_size.y), |ui| {
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                ui.label(rich_name);
-            });
-
-            // Muted size details (far right aligned)
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    prettier_bytes::ByteFormatter::new()
-                        .format(node.size)
-                        .to_string(),
-                );
-            });
-        });
-
-        // Get the bounding box of the whole row
-        let rect = horizontal_res.response.rect;
-
-        // --- Offset the interaction hitbox strictly to the right of the expand button ---
-        let mut interactive_rect = rect;
-        #[allow(clippy::cast_precision_loss)]
-        let expand_button_width = (indent_level as f32).mul_add(16.0, 24.0);
-        interactive_rect.min.x += expand_button_width;
-
-        let row_id = ui.id().with(("tree_row", node_idx));
-        let response = ui.interact(interactive_rect, row_id, egui::Sense::click());
-
-        // Draw professional background selection / hover highlights over the FULL row (for seamless visual style)
-        if is_selected {
-            let fill_color = ui.visuals().selection.bg_fill.linear_multiply(0.12);
-            ui.painter().rect_filled(rect, 4.0, fill_color);
-        } else if response.hovered() {
-            let hover_color = ui.visuals().widgets.hovered.bg_fill.linear_multiply(0.04);
-            ui.painter().rect_filled(rect, 4.0, hover_color);
-        }
-
-        // Handle selection on Left-Click or Right-Click (only outside of the expand button)
-        if response.clicked() || response.secondary_clicked() {
-            self.selected_node_idx = Some(node_idx);
-        }
-
-        // Render the context menu on Right-Click
-        response.context_menu(|ui| {
-            self.draw_file_menu_contents(ui, snapshot);
-        });
-
-        // Draw vertical indentation guidelines to visually track nested guidelines
-        let painter = ui.painter();
-        let stroke = egui::Stroke::new(1.0, crate::colors::INDENT_GUIDELINE);
-        for i in 0..indent_level {
-            #[allow(clippy::cast_precision_loss)]
-            let x = (i as f32).mul_add(16.0, rect.min.x) + 8.0;
-
-            // Draw a dashed vertical line
-            let dash_length = 2.0;
-            let gap_length = 2.0;
-            let step = dash_length + gap_length;
-            let total_height = rect.max.y - rect.min.y;
-            if total_height > 0.0 {
-                let num_steps = (total_height / step).ceil() as usize;
-                for step_idx in 0..num_steps {
-                    #[allow(clippy::cast_precision_loss)]
-                    let segment_y = (step_idx as f32).mul_add(step, rect.min.y);
-
-                    let next_y = (segment_y + dash_length).min(rect.max.y);
-                    painter.line_segment([egui::pos2(x, segment_y), egui::pos2(x, next_y)], stroke);
-                }
-            }
-        }
-    }
-}
-
-// Custom Glassmorphic Dark styling settings
-fn setup_custom_style(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-
-    // Background Slate Color
-    visuals.panel_fill = crate::colors::BG_PANEL_SLATE;
-    visuals.window_fill = crate::colors::BG_WINDOW_SLATE;
-
-    // Borders
-    visuals.widgets.noninteractive.bg_fill = crate::colors::BG_WINDOW_SLATE;
-    visuals.widgets.noninteractive.bg_stroke =
-        egui::Stroke::new(1.0, crate::colors::STROKE_BORDER_SLATE);
-
-    ctx.set_visuals(visuals);
 }

@@ -9,10 +9,8 @@ use std::{
 use arc_swap::ArcSwap;
 use crossbeam::channel::Receiver;
 
-use super::{
-    arena::{FileArenaSnapshot, FileNode, NO_INDEX, StringPool},
-    traversal::{LocalId, ScanEvent},
-};
+use super::traversal::{LocalId, ScanEvent};
+use crate::arena::{FileArenaSnapshot, FileNode, NO_INDEX, StringPool};
 
 pub struct SharedState {
     /// Atomic pointer to the latest immutable snapshot of the tree

@@ -29,13 +29,14 @@
 // --- Feature Gates ---
 #![cfg_attr(windows, feature(windows_by_handle))]
 
-pub mod arena;
-pub mod colors;
-pub mod coordinator;
+pub mod engine;
 pub mod error;
 pub mod gui;
-pub mod persistence;
+pub mod model;
 pub mod stats;
-pub mod traversal;
 
+// Backwards-compatible aliases
+pub use engine::{coordinator, traversal};
 pub use error::EdirstatError;
+pub use gui::theme as colors;
+pub use model::{arena, persistence};

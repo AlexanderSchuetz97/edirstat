@@ -53,7 +53,7 @@ pub fn get_color_for_extension(ext: &str) -> egui::Color32 {
         "mp3" | "wav" | "flac" => EXT_AUDIO,
         "mp4" | "mkv" | "avi" => EXT_VIDEO,
         "png" | "jpg" | "jpeg" | "gif" => EXT_IMAGE,
-        super::arena::NO_EXTENSION => EXT_NONE,
+        crate::arena::NO_EXTENSION => EXT_NONE,
         _ => {
             // Hash the extension to generate a stable, beautiful pseudo-random color
             let mut hash: u32 = 5381;
@@ -68,4 +68,19 @@ pub fn get_color_for_extension(ext: &str) -> egui::Color32 {
             egui::Color32::from(color)
         }
     }
+}
+
+// Custom Glassmorphic Dark styling settings
+pub fn setup_custom_style(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::dark();
+
+    // Background Slate Color
+    visuals.panel_fill = BG_PANEL_SLATE;
+    visuals.window_fill = BG_WINDOW_SLATE;
+
+    // Borders
+    visuals.widgets.noninteractive.bg_fill = BG_WINDOW_SLATE;
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, STROKE_BORDER_SLATE);
+
+    ctx.set_visuals(visuals);
 }
