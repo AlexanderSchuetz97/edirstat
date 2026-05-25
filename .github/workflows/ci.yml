@@ -3,8 +3,8 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  test:
-    name: Tests
+  test-linux:
+    name: Tests (Linux Container)
     runs-on: ubuntu-latest
     container:
       image: registry.gitlab.com/xangelix-pub/containers/arch-rust-nightly-pin-common:latest
@@ -24,6 +24,24 @@ jobs:
 
       - name: Run tests (no default features)
         run: cargo test --no-default-features
+
+      - name: Run tests
+        run: cargo test
+
+  test-macos:
+    name: Tests (macOS Native)
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-04-15
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
 
       - name: Run tests
         run: cargo test
