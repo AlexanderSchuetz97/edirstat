@@ -70,7 +70,7 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             asset_name: edirstat-macos-arm64
-            binary_path: target/release/edirstat
+            binary_path: target/aarch64-apple-darwin/release/edirstat
           - target: x86_64-apple-darwin
             asset_name: edirstat-macos-x86_64
             binary_path: target/x86_64-apple-darwin/release/edirstat
