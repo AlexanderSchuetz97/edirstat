@@ -39,12 +39,13 @@ fn main() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("eDirStat - Cross-Platform Disk Usage Analyzer")
             .with_icon(
-                eframe::icon_data::from_png_bytes(&include_bytes!("../../icon.png")[..]).map_err(
-                    |e| {
-                        eprintln!("Failed to load icon: {e}");
-                        eframe::Error::AppCreation(Box::new(e))
-                    },
-                )?,
+                eframe::icon_data::from_png_bytes(
+                    &include_bytes!("../../assets/img/icon-256x.png")[..],
+                )
+                .map_err(|e| {
+                    eprintln!("Failed to load icon: {e}");
+                    eframe::Error::AppCreation(Box::new(e))
+                })?,
             )
             .with_inner_size([2560.0, 1440.0])
             .with_min_inner_size([800.0, 600.0]),
