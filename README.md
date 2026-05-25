@@ -22,7 +22,7 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is built from
 
 ![eDirStat Plots - Directory Composition](docs/screenshots/directory_composition.jpg)
 
-![eDirStat Plots - File Age vs File Size](docs/screenshots/file_age_vs_file_size.jpg)
+![eDirStat Plots - File Sizes by Extension](docs/screenshots/file_sizes_by_extension.jpg)
 
 ![eDirStat Plots - Linked Temporal Timelines](docs/screenshots/linked_temporal_timelines.jpg)
 
