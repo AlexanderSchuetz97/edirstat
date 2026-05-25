@@ -12,18 +12,89 @@ impl GuiApp {
         indent_level: usize,
         out: &mut Vec<(u32, usize)>,
     ) {
-        let node = &snapshot.nodes[node_idx as usize];
-        let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
 
-        // Filter search query
-        if !self.search_query.is_empty() {
-            let matches_query = name
-                .to_lowercase()
-                .contains(&self.search_query.to_lowercase());
-            // If it's a file and doesn't match, skip
-            if !node.is_directory() && !matches_query {
-                return;
+        // Rebuild cache only if state parameters have changed since last frame
+        let needs_rebuild = self.search_query != self.last_search_query
+            || self.filter_case_sensitive != self.last_filter_case_sensitive
+            || self.filter_regex != self.last_filter_regex
+            || snapshot_ptr != self.last_search_snapshot_ptr
+            || self.cached_node_matches.is_empty();
+
+        if needs_rebuild {
+            self.last_search_query.clone_from(&self.search_query);
+            self.last_filter_case_sensitive = self.filter_case_sensitive;
+            self.last_filter_regex = self.filter_regex;
+            self.last_search_snapshot_ptr = snapshot_ptr;
+
+            self.cached_node_matches.clear();
+
+            if !self.search_query.is_empty() && !snapshot.nodes.is_empty() {
+                self.cached_node_matches.resize(snapshot.nodes.len(), false);
+
+                let regex_matcher = if self.filter_regex {
+                    let mut builder = regex::RegexBuilder::new(&self.search_query);
+                    builder.case_insensitive(!self.filter_case_sensitive);
+                    builder.build().ok()
+                } else {
+                    None
+                };
+
+                // Single-pass O(N) reverse propagation of matched subtrees
+                for idx in (0..snapshot.nodes.len()).rev() {
+                    let node = &snapshot.nodes[idx];
+                    let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+
+                    let self_matches = if let Some(re) = &regex_matcher {
+                        re.is_match(name)
+                    } else if self.filter_case_sensitive {
+                        name.contains(&self.search_query)
+                    } else {
+                        name.to_lowercase()
+                            .contains(&self.search_query.to_lowercase())
+                    };
+
+                    if self_matches {
+                        self.cached_node_matches[idx] = true;
+                    }
+
+                    // If this node matches, flag its parent recursively up to the root
+                    if self.cached_node_matches[idx]
+                        && let Some(parent) = node.parent_opt()
+                        && (parent as usize) < self.cached_node_matches.len()
+                    {
+                        self.cached_node_matches[parent as usize] = true;
+                    }
+                }
             }
+        }
+
+        // Shared borrow of immutable self components (safely bypasses simultaneous borrow limits)
+        self.flatten_visible_tree_impl(
+            snapshot,
+            node_idx,
+            indent_level,
+            out,
+            &self.cached_node_matches,
+        );
+    }
+
+    fn flatten_visible_tree_impl(
+        &self,
+        snapshot: &FileArenaSnapshot,
+        node_idx: u32,
+        indent_level: usize,
+        out: &mut Vec<(u32, usize)>,
+        node_matches: &[bool],
+    ) {
+        let node = &snapshot.nodes[node_idx as usize];
+
+        // Filter search query: O(1) matching subtree lookup
+        if !self.search_query.is_empty()
+            && (node_idx as usize) < node_matches.len()
+            && !node_matches[node_idx as usize]
+        {
+            return;
         }
 
         out.push((node_idx, indent_level));
@@ -38,7 +109,7 @@ impl GuiApp {
                 sorted_child_indices.push(curr);
                 curr = snapshot.nodes[curr as usize].next_sibling;
             }
-            // Sort immediate children by size descending dynamically for 100% correct tree views
+            // Sort immediate children by size descending dynamically for correct tree views
             sorted_child_indices.sort_by(|&a, &b| {
                 snapshot.nodes[b as usize]
                     .size
@@ -46,7 +117,13 @@ impl GuiApp {
             });
 
             for &child_idx in &sorted_child_indices {
-                self.flatten_visible_tree(snapshot, child_idx, indent_level + 1, out);
+                self.flatten_visible_tree_impl(
+                    snapshot,
+                    child_idx,
+                    indent_level + 1,
+                    out,
+                    node_matches,
+                );
             }
         }
     }

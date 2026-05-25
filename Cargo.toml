@@ -31,6 +31,7 @@ memmap2 = "0.9.10"
 open = "5.3.5"
 parking_lot = { version = "0.12.5", features = ["hardware-lock-elision"] }
 prettier-bytes = "0.2.1"
+regex = { version = "1.12.3", features = ["use_std"] }
 rfd = "0.17.2"
 smallvec = "1.15.1"
 thiserror = "2.0.18"

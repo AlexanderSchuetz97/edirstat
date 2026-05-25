@@ -54,6 +54,16 @@ pub struct GuiApp {
     pub(crate) left_panel_collapsed: bool,
     pub(crate) right_panel_collapsed: bool,
 
+    pub(crate) filter_case_sensitive: bool,
+    pub(crate) filter_regex: bool,
+
+    // Caching layer for tree search matches
+    pub(crate) cached_node_matches: Vec<bool>,
+    pub(crate) last_search_query: String,
+    pub(crate) last_filter_case_sensitive: bool,
+    pub(crate) last_filter_regex: bool,
+    pub(crate) last_search_snapshot_ptr: usize,
+
     // Visualization tabs
     pub(crate) vis_mode: VisMode,
     pub(crate) plot_type: PlotType,
@@ -107,6 +117,13 @@ impl GuiApp {
             monospace_paths: false,
             left_panel_collapsed: false,
             right_panel_collapsed: false,
+            filter_case_sensitive: false,
+            filter_regex: false,
+            cached_node_matches: Vec::new(),
+            last_search_query: String::new(),
+            last_filter_case_sensitive: false,
+            last_filter_regex: false,
+            last_search_snapshot_ptr: 0,
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
             treemap_chart: stats::treemap::TreemapChart::new(),
@@ -151,6 +168,11 @@ impl GuiApp {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.deduplicator_progress = atomic_progress::Progress::new_spinner("Deduplicator");
         *self.deduplicator_results.write() = Vec::new();
+        self.cached_node_matches.clear();
+        self.last_search_query.clear();
+        self.last_filter_case_sensitive = false;
+        self.last_filter_regex = false;
+        self.last_search_snapshot_ptr = 0;
         self.traversal_engine.stats().reset();
         self.treemap_chart = stats::treemap::TreemapChart::default();
         self.size_dist_chart = stats::size_distribution::SizeDistributionChart::default();
@@ -216,7 +238,7 @@ impl eframe::App for GuiApp {
         if is_scanning {
             ctx.request_repaint_after(Duration::from_millis(50));
         } else if self.selected_node_idx.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(8)); // ~120fps smooth animation loop
+            ctx.request_repaint();
         }
 
         // Apply dark, premium glassmorphism-inspired style
@@ -258,7 +280,7 @@ impl eframe::App for GuiApp {
                                     .color(ui.visuals().widgets.inactive.text_color()),
                             );
                         }).response;
-                        
+
                         let label_click = ui.interact(response.rect, ui.id().with("monospace_label"), egui::Sense::click());
                         if label_click.clicked() {
                             self.monospace_paths = !self.monospace_paths;
@@ -492,20 +514,47 @@ impl eframe::App for GuiApp {
                     ui.vertical(|ui| {
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            ui.label("🔍 Filter:");
-                            let clear_btn_width = if self.search_query.is_empty() {
-                                0.0
-                            } else {
-                                26.0
-                            };
-                            let desired_width = ui.available_width() - clear_btn_width - 8.0;
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.search_query)
-                                    .desired_width(desired_width.max(10.0)),
+                            ui.strong("🔍 Filter:");
+
+                            // Lay out control elements from right-to-left to prevent layout feedback loops
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    // 1. Far right: Regular Expression matching (.*)
+                                    let reg = self.filter_regex;
+                                    let reg_btn = ui
+                                        .selectable_label(reg, egui::RichText::new(".*").strong())
+                                        .on_hover_text("Use Regular Expression (Regex)");
+                                    if reg_btn.clicked() {
+                                        self.filter_regex = !reg;
+                                    }
+
+                                    // 2. Middle-right: Match Case Sensitivity (Aa)
+                                    let case_sens = self.filter_case_sensitive;
+                                    let case_btn = ui
+                                        .selectable_label(
+                                            case_sens,
+                                            egui::RichText::new("Aa").strong(),
+                                        )
+                                        .on_hover_text("Match Case (Case Sensitive)");
+                                    if case_btn.clicked() {
+                                        self.filter_case_sensitive = !case_sens;
+                                    }
+
+                                    // 3. Clear button
+                                    if !self.search_query.is_empty() && ui.button("❌").clicked() {
+                                        self.search_query.clear();
+                                    }
+
+                                    // 4. Remaining middle-left: TextEdit box (safe, non-recursive width assignment)
+                                    let remaining_width = ui.available_width();
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.search_query)
+                                            .id_salt("filter_text_edit")
+                                            .desired_width(remaining_width.max(10.0)),
+                                    );
+                                },
                             );
-                            if !self.search_query.is_empty() && ui.button("❌").clicked() {
-                                self.search_query.clear();
-                            }
                         });
                         ui.add_space(4.0);
                         ui.separator();
