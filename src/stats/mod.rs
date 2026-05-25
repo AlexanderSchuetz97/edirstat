@@ -12,3 +12,19 @@ pub trait StatsChart {
     /// using the latest thread-safe snapshot frame.
     fn compute(&mut self, snapshot: &crate::arena::FileArenaSnapshot) -> Self::Output;
 }
+
+pub struct StatContext<'a> {
+    pub selected_node_idx: &'a mut Option<u32>,
+    pub expanded_nodes: &'a mut std::collections::HashSet<u32>,
+    pub scroll_to_selected: &'a mut bool,
+}
+
+pub trait StatComponent {
+    /// Renders the statistics/visualization component inside the given UI.
+    fn render(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        snapshot: &crate::arena::FileArenaSnapshot,
+        context: &mut StatContext,
+    );
+}

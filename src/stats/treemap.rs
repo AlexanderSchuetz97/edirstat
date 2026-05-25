@@ -3,7 +3,7 @@ use std::path::Path;
 use eframe::egui::{Color32, Rect, pos2};
 use smallvec::SmallVec;
 
-use super::StatsChart;
+use super::{StatsChart, StatComponent, StatContext};
 use crate::arena::{FileNode, NO_INDEX, StringPool};
 
 const NO_EXTENSION: &str = "(no extension)";
@@ -15,13 +15,25 @@ pub struct TreemapBlock {
 }
 
 pub struct TreemapChart {
-    pub rect: Rect,
+    pub cached_blocks: Vec<TreemapBlock>,
+    pub last_snapshot_ptr: usize,
+    pub last_rect: Rect,
 }
 
 impl TreemapChart {
     #[must_use]
-    pub const fn new(rect: Rect) -> Self {
-        Self { rect }
+    pub const fn new() -> Self {
+        Self {
+            cached_blocks: Vec::new(),
+            last_snapshot_ptr: 0,
+            last_rect: Rect::NOTHING,
+        }
+    }
+}
+
+impl Default for TreemapChart {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -40,8 +52,203 @@ impl StatsChart for TreemapChart {
             max_depth: 20,
         };
 
-        build_treemap(&config, 0, self.rect, 0, &mut blocks);
+        build_treemap(&config, 0, self.last_rect, 0, &mut blocks);
         blocks
+    }
+}
+
+impl StatComponent for TreemapChart {
+    fn render(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        snapshot: &crate::arena::FileArenaSnapshot,
+        context: &mut StatContext,
+    ) {
+        let available_rect = ui.available_rect_before_wrap();
+        let (rect, response) = ui.allocate_exact_size(
+            eframe::egui::vec2(available_rect.width(), available_rect.height() - 20.0),
+            eframe::egui::Sense::click_and_drag(),
+        );
+
+        // --- Layout Cache Check ---
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
+        let needs_rebuild = self.cached_blocks.is_empty()
+            || snapshot_ptr != self.last_snapshot_ptr
+            || rect != self.last_rect;
+
+        if needs_rebuild {
+            let mut blocks = Vec::new();
+            if !snapshot.nodes.is_empty() {
+                let config = TreemapConfig {
+                    nodes: &snapshot.nodes,
+                    string_pool: &snapshot.string_pool,
+                    max_depth: 20,
+                };
+                build_treemap(&config, 0, rect, 0, &mut blocks);
+            }
+            self.cached_blocks = blocks;
+            self.last_snapshot_ptr = snapshot_ptr;
+            self.last_rect = rect;
+        }
+
+        let painter = ui.painter_at(rect);
+        let mut hovered_block = None;
+        let hover_pos = response.hover_pos();
+
+        // Look up hovered block (O(M) linear search is fast on layout blocks in Rust)
+        if let Some(pos) = hover_pos {
+            for block in &self.cached_blocks {
+                if block.rect.contains(pos) {
+                    hovered_block = Some(block);
+                    break;
+                }
+            }
+        }
+
+        // GPU Batching: Consolidate static blocks into exactly ONE single mesh submission to the GPU
+        let mut combined_mesh = eframe::egui::Mesh::default();
+        for block in &self.cached_blocks {
+            let fill_color = block.color;
+            let color_light = fill_color.linear_multiply(1.15);
+            let color_dark = fill_color.linear_multiply(0.75);
+
+            let base_vertex_idx = combined_mesh.vertices.len() as u32;
+
+            combined_mesh.vertices.push(eframe::egui::epaint::Vertex {
+                pos: block.rect.left_top(),
+                uv: eframe::egui::epaint::WHITE_UV,
+                color: color_light,
+            });
+            combined_mesh.vertices.push(eframe::egui::epaint::Vertex {
+                pos: block.rect.right_top(),
+                uv: eframe::egui::epaint::WHITE_UV,
+                color: color_light,
+            });
+            combined_mesh.vertices.push(eframe::egui::epaint::Vertex {
+                pos: block.rect.right_bottom(),
+                uv: eframe::egui::epaint::WHITE_UV,
+                color: color_dark,
+            });
+            combined_mesh.vertices.push(eframe::egui::epaint::Vertex {
+                pos: block.rect.left_bottom(),
+                uv: eframe::egui::epaint::WHITE_UV,
+                color: color_dark,
+            });
+
+            combined_mesh.add_triangle(
+                base_vertex_idx,
+                base_vertex_idx + 1,
+                base_vertex_idx + 2,
+            );
+            combined_mesh.add_triangle(
+                base_vertex_idx,
+                base_vertex_idx + 2,
+                base_vertex_idx + 3,
+            );
+        }
+
+        painter.add(combined_mesh);
+
+        // Dynamic overlays for highlights
+        if let Some(block) = hovered_block {
+            let stroke = eframe::egui::Stroke::new(1.5, eframe::egui::Color32::WHITE);
+            painter.rect(
+                block.rect,
+                0.0,
+                eframe::egui::Color32::TRANSPARENT,
+                stroke,
+                eframe::egui::StrokeKind::Inside,
+            );
+        }
+
+        if let Some(selected_idx) = *context.selected_node_idx {
+            // Reconstruct the bounding box union of all blocks belonging to the selection.
+            // For a file, this yields its individual rect. For a directory, it yields the
+            // exact unified rect of its visible children on-screen.
+            let mut target_rect: Option<eframe::egui::Rect> = None;
+            for block in &self.cached_blocks {
+                if is_descendant(
+                    &snapshot.nodes,
+                    block.node_idx,
+                    selected_idx,
+                ) {
+                    match target_rect {
+                        None => target_rect = Some(block.rect),
+                        Some(ref mut r) => *r = r.union(block.rect),
+                    }
+                }
+            }
+
+            if let Some(rect) = target_rect {
+                let time = ui.input(|i| i.time);
+
+                // A wave factor oscillating smoothly between 0.0 and 1.0 (approx. 1Hz frequency)
+                let pulse = 0.5f64.mul_add((time * 6.0).sin(), 0.5);
+
+                // 1. Draw Outer Expanding Glow (grows and fades)
+                let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
+                let glow_color = crate::colors::GLOW_OUTER_BASE
+                    .linear_multiply(glow_alpha as f32);
+                let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
+                painter.rect(
+                    rect,
+                    0.0,
+                    eframe::egui::Color32::TRANSPARENT,
+                    eframe::egui::Stroke::new(glow_thickness, glow_color),
+                    eframe::egui::StrokeKind::Outside,
+                );
+
+                // 2. Draw Inner Sharp Contrast Core (stays crisp)
+                let core_color = crate::colors::GLOW_INNER_CORE; // Soft pastel purple/violet
+                let core_thickness = 1.0f32.mul_add(pulse as f32, 1.5);
+                painter.rect(
+                    rect,
+                    0.0,
+                    eframe::egui::Color32::TRANSPARENT,
+                    eframe::egui::Stroke::new(core_thickness, core_color),
+                    eframe::egui::StrokeKind::Inside,
+                );
+            }
+        }
+
+        // Click event to select node
+        if response.clicked()
+            && let Some(block) = hovered_block
+        {
+            *context.selected_node_idx = Some(block.node_idx);
+            *context.scroll_to_selected = true; // Raise scroll trigger
+
+            // Auto expand parents so it shows up in tree view
+            let mut curr = Some(block.node_idx);
+            while let Some(idx) = curr {
+                if let Some(node) = snapshot.nodes.get(idx as usize) {
+                    if node.is_directory() {
+                        context.expanded_nodes.insert(idx);
+                    }
+                    curr = node.parent_opt();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Draw tooltip
+        if let Some(block) = hovered_block {
+            let path_str = snapshot.get_full_path(block.node_idx);
+            let size_str = prettier_bytes::ByteFormatter::new()
+                .format(snapshot.nodes[block.node_idx as usize].size)
+                .to_string();
+            eframe::egui::Tooltip::always_open(
+                ui.ctx().clone(),
+                ui.layer_id(),
+                eframe::egui::Id::new("treemap_tooltip"),
+                eframe::egui::PopupAnchor::Pointer,
+            )
+            .show(|ui| {
+                ui.label(format!("📁 {path_str}"));
+                ui.label(format!("💾 Size: {size_str}"));
+            });
+        }
     }
 }
 

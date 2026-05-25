@@ -1,13 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
-    ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
 };
 
 use eframe::egui;
-use egui_plot::{AxisHints, GridMark, Line, Plot, PlotResponse, Points};
 use rfd::FileDialog;
 use smallvec::SmallVec;
 
@@ -16,7 +14,7 @@ use super::{
     colors,
     coordinator::SharedState,
     persistence::{load_snapshot, save_snapshot},
-    stats::{self, StatsChart as _},
+    stats::{self, StatComponent as _},
     traversal::TraversalEngine,
 };
 
@@ -56,6 +54,8 @@ pub struct GuiApp {
     plot_type: PlotType,
 
     // Analytics components
+    treemap_chart: stats::treemap::TreemapChart,
+    size_dist_chart: stats::size_distribution::SizeDistributionChart,
     scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart,
     dir_comp_chart: stats::dir_composition::DirCompositionChart,
     boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart,
@@ -74,11 +74,6 @@ pub struct GuiApp {
     // Extension breakdown stats
     extension_stats: Vec<ExtensionStat>,
     last_extension_update: Option<Instant>,
-
-    // Layout caching fields
-    cached_blocks: Vec<stats::treemap::TreemapBlock>,
-    last_snapshot_ptr: usize,
-    last_rect: egui::Rect,
 
     // Single-use trigger to automatically scroll the list view to the target row
     scroll_to_selected: bool,
@@ -102,6 +97,8 @@ impl GuiApp {
             monospace_paths: false,
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
+            treemap_chart: stats::treemap::TreemapChart::new(),
+            size_dist_chart: stats::size_distribution::SizeDistributionChart::new(),
             scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart::new(),
             dir_comp_chart: stats::dir_composition::DirCompositionChart::new(0),
             boxplot_chart: stats::extension_boxplot::ExtensionBoxplotChart::new(),
@@ -114,9 +111,6 @@ impl GuiApp {
             total_scan_duration: None,
             extension_stats: Vec::new(),
             last_extension_update: None,
-            cached_blocks: Vec::new(),
-            last_snapshot_ptr: 0,
-            last_rect: egui::Rect::NOTHING,
             scroll_to_selected: false,
         }
     }
@@ -130,13 +124,13 @@ impl GuiApp {
         self.delete_node_idx = None;
         self.active_modal = None;
         self.traversal_engine.stats().reset();
-        self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::new();
-        self.dir_comp_chart = stats::dir_composition::DirCompositionChart::new(0);
-        self.boxplot_chart = stats::extension_boxplot::ExtensionBoxplotChart::new();
-        self.timeline_chart = stats::temporal_timeline::TemporalTimelineChart::new();
-        self.cached_blocks.clear();
-        self.last_snapshot_ptr = 0;
-        self.last_rect = egui::Rect::NOTHING;
+        self.treemap_chart = stats::treemap::TreemapChart::default();
+        self.size_dist_chart = stats::size_distribution::SizeDistributionChart::default();
+        self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::default();
+        self.dir_comp_chart = stats::dir_composition::DirCompositionChart::default();
+        self.boxplot_chart = stats::extension_boxplot::ExtensionBoxplotChart::default();
+        self.timeline_chart = stats::temporal_timeline::TemporalTimelineChart::default();
+
         self.scroll_to_selected = false;
     }
 
@@ -167,511 +161,6 @@ impl GuiApp {
             self.delete_node_idx = self.selected_node_idx;
             ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
         }
-    }
-
-    fn render_size_distribution_plot(ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        let mut chart_gen = stats::size_distribution::SizeDistributionChart;
-        let bar_chart = chart_gen.compute(snapshot);
-
-        let formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let labels = [
-                "< 10 KB",
-                "10 KB - 100 KB",
-                "100 KB - 1 MB",
-                "1 MB - 10 MB",
-                "10 MB - 100 MB",
-                "100 MB - 1 GB",
-                "1 GB - 10 GB",
-                "> 10 GB",
-            ];
-            let val = mark.value.round() as usize;
-            if val < labels.len() {
-                labels[val].to_string()
-            } else {
-                String::new()
-            }
-        };
-
-        let x_grid = |_input: egui_plot::GridInput| {
-            let mut marks = vec![];
-            for i in 0..8 {
-                marks.push(GridMark {
-                    value: i as f64,
-                    step_size: 1.0,
-                });
-            }
-            marks
-        };
-
-        let x_axes = vec![
-            AxisHints::new_x()
-                .label("File Size Bracket")
-                .formatter(formatter),
-        ];
-
-        let plot = Plot::new("size_dist_plot")
-            .height(ui.available_height() - 10.0)
-            .custom_x_axes(x_axes)
-            .x_grid_spacer(x_grid)
-            .y_axis_label("File Count")
-            .allow_zoom(false)
-            .allow_drag(false)
-            .allow_scroll(false);
-
-        plot.show(ui, |plot_ui| {
-            plot_ui.bar_chart(bar_chart);
-        });
-    }
-
-    fn render_scatter_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        // Recompute parameters if snapshot boundary updates
-        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
-        if self.last_snapshot_ptr != snapshot_ptr || self.scatter_chart.top_files.is_empty() {
-            self.scatter_chart.compute(snapshot);
-            self.last_snapshot_ptr = snapshot_ptr;
-        }
-
-        if self.scatter_chart.top_files.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label("No file data available to plot.");
-            });
-            return;
-        }
-
-        let max_time = self.scatter_chart.max_timestamp;
-
-        // Populate log-scale coordinates [Age, Size]
-        let plot_points: Vec<[f64; 2]> = self
-            .scatter_chart
-            .top_files
-            .iter()
-            .map(|&(idx, size)| {
-                let node = &snapshot.nodes[idx as usize];
-
-                #[allow(clippy::cast_precision_loss)]
-                let age_days = if max_time > node.modified_timestamp {
-                    (max_time - node.modified_timestamp) as f64 / 86400.0
-                } else {
-                    0.0
-                };
-                #[allow(clippy::cast_precision_loss)]
-                let size_log = (size as f64).log10();
-
-                [age_days, size_log]
-            })
-            .collect();
-
-        // Format grid boundaries log10 values into pretty byte readouts
-        let y_formatter = |mark: egui_plot::GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value;
-            if val < 0.0 {
-                return String::new();
-            }
-            let bytes = 10.0f64.powf(val);
-            if bytes >= 1.0 {
-                prettier_bytes::ByteFormatter::new()
-                    .format(bytes as u64)
-                    .to_string()
-            } else {
-                String::new()
-            }
-        };
-
-        let x_axes = vec![AxisHints::new_x().label("File Age (Days unmodified)")];
-        let y_axes = vec![
-            AxisHints::new_y()
-                .label("File Size (Logarithmic)")
-                .formatter(y_formatter),
-        ];
-
-        let points = Points::new("Top 5,000 Space Hogs", plot_points)
-            .radius(2.0)
-            .color(crate::colors::COLOR_SCANNING);
-
-        let plot = Plot::new("age_size_scatter_plot")
-            .height(ui.available_height() - 10.0)
-            .custom_x_axes(x_axes)
-            .custom_y_axes(y_axes)
-            .show_background(true);
-
-        let PlotResponse {
-            inner: (pointer_coordinate, bounds),
-            ..
-        } = plot.show(ui, |plot_ui| {
-            plot_ui.points(points);
-            (plot_ui.pointer_coordinate(), plot_ui.plot_bounds())
-        });
-
-        // Hover coordinates check for rendering on-demand details
-        if let Some(coord) = pointer_coordinate {
-            let bounds_width = bounds.width();
-            let bounds_height = bounds.height();
-
-            if bounds_width > 0.0 && bounds_height > 0.0 {
-                let mut closest_node_idx = None;
-                let mut min_dist_sq = f64::INFINITY;
-
-                for &(idx, size) in &self.scatter_chart.top_files {
-                    let node = &snapshot.nodes[idx as usize];
-
-                    #[allow(clippy::cast_precision_loss)]
-                    let age_days = if max_time > node.modified_timestamp {
-                        (max_time - node.modified_timestamp) as f64 / 86400.0
-                    } else {
-                        0.0
-                    };
-
-                    #[allow(clippy::cast_precision_loss)]
-                    let size_log = (size as f64).log10();
-
-                    // Standardize aspect ratio coordinate scaling
-                    let dx = (coord.x - age_days) / bounds_width;
-                    let dy = (coord.y - size_log) / bounds_height;
-                    let dist_sq = dy.mul_add(dy, dx * dx);
-
-                    if dist_sq < min_dist_sq {
-                        min_dist_sq = dist_sq;
-                        closest_node_idx = Some(idx);
-                    }
-                }
-
-                // Tooltip displays if within visual vicinity (0.02 screen-radius bounds)
-                if min_dist_sq < 0.0004
-                    && let Some(node_idx) = closest_node_idx
-                {
-                    let node = &snapshot.nodes[node_idx as usize];
-                    let path_str = snapshot.get_full_path(node_idx);
-                    let size_str = prettier_bytes::ByteFormatter::new()
-                        .format(node.size)
-                        .to_string();
-
-                    let age_days = if max_time > node.modified_timestamp {
-                        (max_time - node.modified_timestamp) / 86400
-                    } else {
-                        0
-                    };
-
-                    egui::Tooltip::always_open(
-                        ui.ctx().clone(),
-                        ui.layer_id(),
-                        egui::Id::new("scatter_tooltip"),
-                        egui::PopupAnchor::Pointer,
-                    )
-                    .show(|ui| {
-                        ui.label(format!("📄 Path: {path_str}"));
-                        ui.label(format!("💾 Size: {size_str}"));
-                        ui.label(format!("⏳ Age: {age_days} days unmodified"));
-                    });
-                }
-            }
-        }
-    }
-
-    fn render_dir_composition_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        use stats::StatsChart;
-
-        // Bind composition to active tree folder, falling back to root (0)
-        let active_dir = self.selected_node_idx.unwrap_or(0);
-
-        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
-        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr
-            || self.dir_comp_chart.parent_idx != active_dir
-            || self.dir_comp_chart.children_composition.is_empty();
-
-        if needs_rebuild {
-            self.dir_comp_chart.parent_idx = active_dir;
-            self.dir_comp_chart.compute(snapshot);
-            self.last_snapshot_ptr = snapshot_ptr;
-        }
-
-        if self.dir_comp_chart.children_composition.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    "Selected path has no nested subdirectories or files to display composition.",
-                );
-            });
-            return;
-        }
-
-        let parent_name = snapshot
-            .string_pool
-            .get(snapshot.nodes[active_dir as usize].name_id)
-            .unwrap_or("Root");
-        ui.strong(format!("📁 Active Directory: {parent_name}"));
-        ui.add_space(4.0);
-
-        let children_count = self.dir_comp_chart.children_composition.len();
-        let chart_ref = &self.dir_comp_chart;
-
-        let x_formatter = move |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value.round() as usize;
-            if val < children_count {
-                chart_ref.children_composition[val].0.clone()
-            } else {
-                String::new()
-            }
-        };
-
-        let y_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value;
-            if val <= 0.0 {
-                return String::new();
-            }
-            prettier_bytes::ByteFormatter::new()
-                .format(val as u64)
-                .to_string()
-        };
-
-        let x_grid = move |_input: egui_plot::GridInput| {
-            let mut marks = vec![];
-            for i in 0..children_count {
-                #[allow(clippy::cast_precision_loss)]
-                let value = i as f64;
-
-                marks.push(GridMark {
-                    value,
-                    step_size: 1.0,
-                });
-            }
-            marks
-        };
-
-        let x_axes = vec![
-            AxisHints::new_x()
-                .label("Direct Children")
-                .formatter(x_formatter),
-        ];
-        let y_axes = vec![
-            AxisHints::new_y()
-                .label("Cumulative Space")
-                .formatter(y_formatter),
-        ];
-
-        // Generate stacked bar charts for active configuration
-        let mut chart_gen = stats::dir_composition::DirCompositionChart::new(active_dir);
-        let stacked_charts = chart_gen.compute(snapshot);
-
-        let plot = Plot::new("dir_composition_plot")
-            .height(ui.available_height() - 30.0)
-            .custom_x_axes(x_axes)
-            .custom_y_axes(y_axes)
-            .x_grid_spacer(x_grid)
-            .legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop))
-            .allow_zoom(false)
-            .allow_drag(false)
-            .allow_scroll(false);
-
-        plot.show(ui, |plot_ui| {
-            for chart in stacked_charts {
-                plot_ui.bar_chart(chart);
-            }
-        });
-    }
-
-    fn render_boxplot_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
-        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr
-            || self.boxplot_chart.computed_spreads.is_empty();
-
-        if needs_rebuild {
-            self.boxplot_chart.compute(snapshot);
-            self.last_snapshot_ptr = snapshot_ptr;
-        }
-
-        if self.boxplot_chart.computed_spreads.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    "Not enough file data in any single extension category to generate box plots.",
-                );
-            });
-            return;
-        }
-
-        let spreads_count = self.boxplot_chart.computed_spreads.len();
-        let chart_ref = &self.boxplot_chart;
-
-        let x_formatter = move |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value.round() as usize;
-            if val < spreads_count {
-                format!(".{}", chart_ref.computed_spreads[val].0.clone())
-            } else {
-                String::new()
-            }
-        };
-
-        let y_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value;
-            if val < 0.0 {
-                return String::new();
-            }
-            let bytes = 10.0f64.powf(val);
-            if bytes >= 1.0 {
-                prettier_bytes::ByteFormatter::new()
-                    .format(bytes as u64)
-                    .to_string()
-            } else {
-                String::new()
-            }
-        };
-
-        let x_grid = move |_input: egui_plot::GridInput| {
-            let mut marks = vec![];
-            for i in 0..spreads_count {
-                #[allow(clippy::cast_precision_loss)]
-                let value = i as f64;
-
-                marks.push(GridMark {
-                    value,
-                    step_size: 1.0,
-                });
-            }
-            marks
-        };
-
-        let x_axes = vec![
-            AxisHints::new_x()
-                .label("Top Extensions (by file count)")
-                .formatter(x_formatter),
-        ];
-        let y_axes = vec![
-            AxisHints::new_y()
-                .label("File Size Distribution")
-                .formatter(y_formatter),
-        ];
-
-        let plot = Plot::new("boxplot_plot")
-            .height(ui.available_height() - 10.0)
-            .custom_x_axes(x_axes)
-            .custom_y_axes(y_axes)
-            .x_grid_spacer(x_grid)
-            .legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop))
-            .allow_zoom(false)
-            .allow_drag(false)
-            .allow_scroll(false);
-
-        plot.show(ui, |plot_ui| {
-            for (i, (ext, spread)) in self.boxplot_chart.computed_spreads.iter().enumerate() {
-                #[allow(clippy::cast_precision_loss)]
-                let index = i as f64;
-
-                let elem =
-                    egui_plot::BoxElem::new(index, spread.clone()).name(format!(".{ext} sizes"));
-                let box_plot = egui_plot::BoxPlot::new(ext.clone(), vec![elem])
-                    .color(colors::get_color_for_extension(ext));
-                plot_ui.box_plot(box_plot);
-            }
-        });
-    }
-
-    fn render_timeline_plot(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
-        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
-        let needs_rebuild =
-            self.last_snapshot_ptr != snapshot_ptr || self.timeline_chart.sorted_days.is_empty();
-
-        if needs_rebuild {
-            self.timeline_chart.compute(snapshot);
-            self.last_snapshot_ptr = snapshot_ptr;
-        }
-
-        if self.timeline_chart.sorted_days.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label("No file modification metadata available to construct timelines.");
-            });
-            return;
-        }
-
-        // Build Space Points (cumulative) and Activity Points (daily frequency)
-        let mut space_points = Vec::new();
-        let mut activity_points = Vec::new();
-
-        let mut cumulative_size = 0u64;
-        for &day in &self.timeline_chart.sorted_days {
-            let (size, count) = self.timeline_chart.daily_totals[&day];
-            cumulative_size += size;
-
-            #[allow(clippy::cast_precision_loss)]
-            let d = day as f64;
-            #[allow(clippy::cast_precision_loss)]
-            let count_d = count as f64;
-            #[allow(clippy::cast_precision_loss)]
-            let cumulative_size_d = cumulative_size as f64;
-
-            space_points.push([d, cumulative_size_d]);
-            activity_points.push([d, count_d]);
-        }
-
-        // Custom time-axis calendar formatter
-        let x_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value.round() as i64;
-            stats::temporal_timeline::format_epoch_to_date(val)
-        };
-
-        let y_space_formatter = |mark: GridMark, _range: &RangeInclusive<f64>| {
-            let val = mark.value;
-            if val <= 0.0 {
-                return String::new();
-            }
-            prettier_bytes::ByteFormatter::new()
-                .format(val as u64)
-                .to_string()
-        };
-
-        // Shared link structures
-        let link_group_id = ui.id().with("linked_timeline_plots");
-        let link_axis = egui::Vec2b::new(true, false); // link X only, do not scale Y together
-        let link_cursor = egui::Vec2b::new(true, false);
-
-        let space_line = Line::new("Space Progress", space_points)
-            .color(crate::colors::COLOR_SCANNING)
-            .width(2.0);
-
-        let activity_line = Line::new("Activity Frequency", activity_points)
-            .color(crate::colors::GLOW_INNER_CORE)
-            .width(1.5);
-
-        // Render dual layout
-        let half_height = (ui.available_height() - 40.0) / 2.0;
-
-        ui.label(
-            "Timeline views are dynamically linked; zooming/panning one will scroll the other.",
-        );
-        ui.add_space(4.0);
-
-        // 1. Top Plot: Cumulative Storage Growth
-        let top_x = vec![AxisHints::new_x().formatter(x_formatter)];
-        let top_y = vec![
-            AxisHints::new_y()
-                .label("Disk Space")
-                .formatter(y_space_formatter),
-        ];
-        let plot_top = Plot::new("timeline_space_plot")
-            .height(half_height)
-            .custom_x_axes(top_x)
-            .custom_y_axes(top_y)
-            .link_axis(link_group_id, link_axis)
-            .link_cursor(link_group_id, link_cursor)
-            .legend(egui_plot::Legend::default().position(egui_plot::Corner::LeftTop));
-
-        plot_top.show(ui, |plot_ui| {
-            plot_ui.line(space_line);
-        });
-
-        ui.add_space(6.0);
-
-        // 2. Bottom Plot: Activity frequency spikes
-        let bottom_x = vec![AxisHints::new_x().formatter(x_formatter)];
-        let bottom_y = vec![AxisHints::new_y().label("Files Modified")];
-        let plot_bottom = Plot::new("timeline_activity_plot")
-            .height(half_height)
-            .custom_x_axes(bottom_x)
-            .custom_y_axes(bottom_y)
-            .link_axis(link_group_id, link_axis)
-            .link_cursor(link_group_id, link_cursor)
-            .legend(egui_plot::Legend::default().position(egui_plot::Corner::LeftTop));
-
-        plot_bottom.show(ui, |plot_ui| {
-            plot_ui.line(activity_line);
-        });
     }
 }
 
@@ -1059,8 +548,6 @@ impl eframe::App for GuiApp {
                     ui.selectable_value(&mut self.vis_mode, VisMode::Treemap, "🗺 Treemap");
                     ui.selectable_value(&mut self.vis_mode, VisMode::Plots, "📈 Plots");
                 });
-                ui.separator();
-
                 if self.vis_mode == VisMode::Treemap {
                     ui.heading(
                         egui::RichText::new("📊 Treemap Visualization")
@@ -1074,183 +561,12 @@ impl eframe::App for GuiApp {
                             ui.label("Scanned filesystem will be visualized as a treemap here.");
                         });
                     } else {
-                        let available_rect = ui.available_rect_before_wrap();
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(available_rect.width(), available_rect.height() - 20.0),
-                            egui::Sense::click_and_drag(),
-                        );
-
-                        // --- Layout Cache Check ---
-                        let snapshot_ptr = Arc::as_ptr(&snapshot.nodes) as usize;
-                        let needs_rebuild = self.cached_blocks.is_empty()
-                            || snapshot_ptr != self.last_snapshot_ptr
-                            || rect != self.last_rect;
-
-                        if needs_rebuild {
-                            let mut chart = stats::treemap::TreemapChart::new(rect);
-                            self.cached_blocks = chart.compute(&snapshot);
-                            self.last_snapshot_ptr = snapshot_ptr;
-                            self.last_rect = rect;
-                        }
-
-                        let painter = ui.painter_at(rect);
-                        let mut hovered_block = None;
-                        let hover_pos = response.hover_pos();
-
-                        // Look up hovered block (O(M) linear search is fast on layout blocks in Rust)
-                        if let Some(pos) = hover_pos {
-                            for block in &self.cached_blocks {
-                                if block.rect.contains(pos) {
-                                    hovered_block = Some(block);
-                                    break;
-                                }
-                            }
-                        }
-
-                        // GPU Batching: Consolidate static blocks into exactly ONE single mesh submission to the GPU
-                        let mut combined_mesh = egui::Mesh::default();
-                        for block in &self.cached_blocks {
-                            let fill_color = block.color;
-                            let color_light = fill_color.linear_multiply(1.15);
-                            let color_dark = fill_color.linear_multiply(0.75);
-
-                            let base_vertex_idx = combined_mesh.vertices.len() as u32;
-
-                            combined_mesh.vertices.push(egui::epaint::Vertex {
-                                pos: block.rect.left_top(),
-                                uv: egui::epaint::WHITE_UV,
-                                color: color_light,
-                            });
-                            combined_mesh.vertices.push(egui::epaint::Vertex {
-                                pos: block.rect.right_top(),
-                                uv: egui::epaint::WHITE_UV,
-                                color: color_light,
-                            });
-                            combined_mesh.vertices.push(egui::epaint::Vertex {
-                                pos: block.rect.right_bottom(),
-                                uv: egui::epaint::WHITE_UV,
-                                color: color_dark,
-                            });
-                            combined_mesh.vertices.push(egui::epaint::Vertex {
-                                pos: block.rect.left_bottom(),
-                                uv: egui::epaint::WHITE_UV,
-                                color: color_dark,
-                            });
-
-                            combined_mesh.add_triangle(
-                                base_vertex_idx,
-                                base_vertex_idx + 1,
-                                base_vertex_idx + 2,
-                            );
-                            combined_mesh.add_triangle(
-                                base_vertex_idx,
-                                base_vertex_idx + 2,
-                                base_vertex_idx + 3,
-                            );
-                        }
-
-                        painter.add(combined_mesh);
-
-                        // Dynamic overlays for highlights
-                        if let Some(block) = hovered_block {
-                            let stroke = egui::Stroke::new(1.5, egui::Color32::WHITE);
-                            painter.rect(
-                                block.rect,
-                                0.0,
-                                egui::Color32::TRANSPARENT,
-                                stroke,
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-
-                        if let Some(selected_idx) = self.selected_node_idx {
-                            // Reconstruct the bounding box union of all blocks belonging to the selection.
-                            // For a file, this yields its individual rect. For a directory, it yields the
-                            // exact unified rect of its visible children on-screen.
-                            let mut target_rect: Option<egui::Rect> = None;
-                            for block in &self.cached_blocks {
-                                if stats::treemap::is_descendant(
-                                    &snapshot.nodes,
-                                    block.node_idx,
-                                    selected_idx,
-                                ) {
-                                    match target_rect {
-                                        None => target_rect = Some(block.rect),
-                                        Some(ref mut r) => *r = r.union(block.rect),
-                                    }
-                                }
-                            }
-
-                            if let Some(rect) = target_rect {
-                                let time = ui.input(|i| i.time);
-
-                                // A wave factor oscillating smoothly between 0.0 and 1.0 (approx. 1Hz frequency)
-                                let pulse = 0.5f64.mul_add((time * 6.0).sin(), 0.5);
-
-                                // 1. Draw Outer Expanding Glow (grows and fades)
-                                let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
-                                let glow_color = crate::colors::GLOW_OUTER_BASE
-                                    .linear_multiply(glow_alpha as f32);
-                                let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
-                                painter.rect(
-                                    rect,
-                                    0.0,
-                                    egui::Color32::TRANSPARENT,
-                                    egui::Stroke::new(glow_thickness, glow_color),
-                                    egui::StrokeKind::Outside,
-                                );
-
-                                // 2. Draw Inner Sharp Contrast Core (stays crisp)
-                                let core_color = crate::colors::GLOW_INNER_CORE; // Soft pastel purple/violet
-                                let core_thickness = 1.0f32.mul_add(pulse as f32, 1.5);
-                                painter.rect(
-                                    rect,
-                                    0.0,
-                                    egui::Color32::TRANSPARENT,
-                                    egui::Stroke::new(core_thickness, core_color),
-                                    egui::StrokeKind::Inside,
-                                );
-                            }
-                        }
-
-                        // Click event to select node
-                        if response.clicked()
-                            && let Some(block) = hovered_block
-                        {
-                            self.selected_node_idx = Some(block.node_idx);
-                            self.scroll_to_selected = true; // Raise scroll trigger
-
-                            // Auto expand parents so it shows up in tree view
-                            let mut curr = Some(block.node_idx);
-                            while let Some(idx) = curr {
-                                if let Some(node) = snapshot.nodes.get(idx as usize) {
-                                    if node.is_directory() {
-                                        self.expanded_nodes.insert(idx);
-                                    }
-                                    curr = node.parent_opt();
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Draw tooltip
-                        if let Some(block) = hovered_block {
-                            let path_str = snapshot.get_full_path(block.node_idx);
-                            let size_str = prettier_bytes::ByteFormatter::new()
-                                .format(snapshot.nodes[block.node_idx as usize].size)
-                                .to_string();
-                            egui::Tooltip::always_open(
-                                ctx.clone(),
-                                ui.layer_id(),
-                                egui::Id::new("treemap_tooltip"),
-                                egui::PopupAnchor::Pointer,
-                            )
-                            .show(|ui| {
-                                ui.label(format!("📁 {path_str}"));
-                                ui.label(format!("💾 Size: {size_str}"));
-                            });
-                        }
+                        let mut context = stats::StatContext {
+                            selected_node_idx: &mut self.selected_node_idx,
+                            expanded_nodes: &mut self.expanded_nodes,
+                            scroll_to_selected: &mut self.scroll_to_selected,
+                        };
+                        self.treemap_chart.render(ui, &snapshot, &mut context);
                     }
                 } else {
                     // Plots rendering block
@@ -1299,21 +615,26 @@ impl eframe::App for GuiApp {
                             ui.label("Scanned filesystem will be plotted here.");
                         });
                     } else {
+                        let mut context = stats::StatContext {
+                            selected_node_idx: &mut self.selected_node_idx,
+                            expanded_nodes: &mut self.expanded_nodes,
+                            scroll_to_selected: &mut self.scroll_to_selected,
+                        };
                         match self.plot_type {
                             PlotType::SizeDistribution => {
-                                Self::render_size_distribution_plot(ui, &snapshot);
+                                self.size_dist_chart.render(ui, &snapshot, &mut context);
                             }
                             PlotType::AgeSizeScatter => {
-                                self.render_scatter_plot(ui, &snapshot);
+                                self.scatter_chart.render(ui, &snapshot, &mut context);
                             }
                             PlotType::DirComposition => {
-                                self.render_dir_composition_plot(ui, &snapshot);
+                                self.dir_comp_chart.render(ui, &snapshot, &mut context);
                             }
                             PlotType::ExtensionBoxplot => {
-                                self.render_boxplot_plot(ui, &snapshot);
+                                self.boxplot_chart.render(ui, &snapshot, &mut context);
                             }
                             PlotType::TemporalTimeline => {
-                                self.render_timeline_plot(ui, &snapshot);
+                                self.timeline_chart.render(ui, &snapshot, &mut context);
                             }
                         }
                     }

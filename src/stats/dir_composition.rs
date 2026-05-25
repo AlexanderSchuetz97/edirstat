@@ -9,6 +9,7 @@ pub struct DirCompositionChart {
     pub top_extensions: Vec<String>,
     // Holds (child_name, child_extension_map, total_bytes) for the top 8 children
     pub children_composition: Vec<(String, HashMap<String, u64>, u64)>,
+    pub last_snapshot_ptr: usize,
 }
 
 impl DirCompositionChart {
@@ -18,24 +19,31 @@ impl DirCompositionChart {
             parent_idx,
             top_extensions: Vec::new(),
             children_composition: Vec::new(),
+            last_snapshot_ptr: 0,
         }
     }
 }
 
+impl Default for DirCompositionChart {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 impl super::StatsChart for DirCompositionChart {
-    type Output = Vec<BarChart>;
+    type Output = ();
 
     fn compute(&mut self, snapshot: &FileArenaSnapshot) -> Self::Output {
         self.top_extensions.clear();
         self.children_composition.clear();
 
         if snapshot.nodes.is_empty() || self.parent_idx as usize >= snapshot.nodes.len() {
-            return Vec::new();
+            return;
         }
 
         let parent_node = &snapshot.nodes[self.parent_idx as usize];
         if !parent_node.is_directory() {
-            return Vec::new();
+            return;
         }
 
         // 1. Gather all immediate children of the parent directory
@@ -47,7 +55,7 @@ impl super::StatsChart for DirCompositionChart {
         }
 
         if immediate_children.is_empty() {
-            return Vec::new();
+            return;
         }
 
         // Sort immediate children descending by size
@@ -104,8 +112,48 @@ impl super::StatsChart for DirCompositionChart {
 
         let top_exts: Vec<String> = sorted_exts.into_iter().map(|(ext, _)| ext).collect();
         self.top_extensions.clone_from(&top_exts);
+    }
+}
 
-        // 3. Build stacked BarCharts
+impl super::StatComponent for DirCompositionChart {
+    fn render(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        snapshot: &crate::arena::FileArenaSnapshot,
+        context: &mut super::StatContext,
+    ) {
+        use super::StatsChart;
+        // Bind composition to active tree folder, falling back to root (0)
+        let active_dir = context.selected_node_idx.unwrap_or(0);
+
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
+        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr
+            || self.parent_idx != active_dir
+            || self.children_composition.is_empty();
+
+        if needs_rebuild {
+            self.parent_idx = active_dir;
+            self.compute(snapshot);
+            self.last_snapshot_ptr = snapshot_ptr;
+        }
+
+        if self.children_composition.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    "Selected path has no nested subdirectories or files to display composition.",
+                );
+            });
+            return;
+        }
+
+        let parent_name = snapshot
+            .string_pool
+            .get(snapshot.nodes[active_dir as usize].name_id)
+            .unwrap_or("Root");
+        ui.strong(format!("📁 Active Directory: {parent_name}"));
+        ui.add_space(4.0);
+
+        // Build stacked BarCharts on demand
         let mut unstacked_charts = Vec::new();
 
         // Color mapping helper matching the global layout extensions
@@ -139,7 +187,7 @@ impl super::StatsChart for DirCompositionChart {
         };
 
         // Create individual BarChart bars for each top extension
-        for ext in &top_exts {
+        for ext in &self.top_extensions {
             let mut bars = Vec::new();
             for (i, (_child_name, ext_map, _total_size)) in
                 self.children_composition.iter().enumerate()
@@ -164,7 +212,7 @@ impl super::StatsChart for DirCompositionChart {
         {
             let mut other_height = 0u64;
             for (ext, &size) in ext_map {
-                if !top_exts.contains(ext) {
+                if !self.top_extensions.contains(ext) {
                     other_height += size;
                 }
             }
@@ -189,7 +237,69 @@ impl super::StatsChart for DirCompositionChart {
             stacked_charts.push(stacked);
         }
 
-        stacked_charts
+        let children_count = self.children_composition.len();
+
+        // Clone names to keep closure 'static
+        let children_names: Vec<String> = self.children_composition.iter().map(|(name, _, _)| name.clone()).collect();
+        let x_formatter = move |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+            let val = mark.value.round() as usize;
+            if val < children_count {
+                children_names[val].clone()
+            } else {
+                String::new()
+            }
+        };
+
+        let y_formatter = |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+            let val = mark.value;
+            if val <= 0.0 {
+                return String::new();
+            }
+            prettier_bytes::ByteFormatter::new()
+                .format(val as u64)
+                .to_string()
+        };
+
+        let x_grid = move |_input: egui_plot::GridInput| {
+            let mut marks = vec![];
+            for i in 0..children_count {
+                #[allow(clippy::cast_precision_loss)]
+                let value = i as f64;
+
+                marks.push(egui_plot::GridMark {
+                    value,
+                    step_size: 1.0,
+                });
+            }
+            marks
+        };
+
+        let x_axes = vec![
+            egui_plot::AxisHints::new_x()
+                .label("Direct Children")
+                .formatter(x_formatter),
+        ];
+        let y_axes = vec![
+            egui_plot::AxisHints::new_y()
+                .label("Cumulative Space")
+                .formatter(y_formatter),
+        ];
+
+        let plot = egui_plot::Plot::new("dir_composition_plot")
+            .height(ui.available_height() - 30.0)
+            .custom_x_axes(x_axes)
+            .custom_y_axes(y_axes)
+            .x_grid_spacer(x_grid)
+            .legend(egui_plot::Legend::default().position(egui_plot::Corner::RightTop))
+            .allow_zoom(false)
+            .allow_drag(false)
+            .allow_scroll(false);
+
+        plot.show(ui, |plot_ui| {
+            for chart in stacked_charts {
+                plot_ui.bar_chart(chart);
+            }
+        });
     }
 }
 

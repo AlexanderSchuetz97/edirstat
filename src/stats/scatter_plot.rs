@@ -1,6 +1,7 @@
 pub struct FileAgeSizeScatterChart {
     pub top_files: Vec<(u32, u64)>, // (node_idx, size)
     pub max_timestamp: i64,
+    pub last_snapshot_ptr: usize,
 }
 
 impl FileAgeSizeScatterChart {
@@ -9,6 +10,7 @@ impl FileAgeSizeScatterChart {
         Self {
             top_files: Vec::new(),
             max_timestamp: 0,
+            last_snapshot_ptr: 0,
         }
     }
 }
@@ -52,5 +54,155 @@ impl super::StatsChart for FileAgeSizeScatterChart {
         files.truncate(5000);
 
         self.top_files = files;
+    }
+}
+
+impl super::StatComponent for FileAgeSizeScatterChart {
+    fn render(
+        &mut self,
+        ui: &mut eframe::egui::Ui,
+        snapshot: &crate::arena::FileArenaSnapshot,
+        _context: &mut super::StatContext,
+    ) {
+        use super::StatsChart;
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
+        if self.last_snapshot_ptr != snapshot_ptr || self.top_files.is_empty() {
+            self.compute(snapshot);
+            self.last_snapshot_ptr = snapshot_ptr;
+        }
+
+        if self.top_files.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label("No file data available to plot.");
+            });
+            return;
+        }
+
+        let max_time = self.max_timestamp;
+
+        // Populate log-scale coordinates [Age, Size]
+        let plot_points: Vec<[f64; 2]> = self
+            .top_files
+            .iter()
+            .map(|&(idx, size)| {
+                let node = &snapshot.nodes[idx as usize];
+
+                #[allow(clippy::cast_precision_loss)]
+                let age_days = if max_time > node.modified_timestamp {
+                    (max_time - node.modified_timestamp) as f64 / 86400.0
+                } else {
+                    0.0
+                };
+                #[allow(clippy::cast_precision_loss)]
+                let size_log = (size as f64).log10();
+
+                [age_days, size_log]
+            })
+            .collect();
+
+        // Format grid boundaries log10 values into pretty byte readouts
+        let y_formatter = |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+            let val = mark.value;
+            if val < 0.0 {
+                return String::new();
+            }
+            let bytes = 10.0f64.powf(val);
+            if bytes >= 1.0 {
+                prettier_bytes::ByteFormatter::new()
+                    .format(bytes as u64)
+                    .to_string()
+            } else {
+                String::new()
+            }
+        };
+
+        let x_axes = vec![egui_plot::AxisHints::new_x().label("File Age (Days unmodified)")];
+        let y_axes = vec![
+            egui_plot::AxisHints::new_y()
+                .label("File Size (Logarithmic)")
+                .formatter(y_formatter),
+        ];
+
+        let points = egui_plot::Points::new("Top 5,000 Space Hogs", plot_points)
+            .radius(2.0)
+            .color(crate::colors::COLOR_SCANNING);
+
+        let plot = egui_plot::Plot::new("age_size_scatter_plot")
+            .height(ui.available_height() - 10.0)
+            .custom_x_axes(x_axes)
+            .custom_y_axes(y_axes)
+            .show_background(true);
+
+        let egui_plot::PlotResponse {
+            inner: (pointer_coordinate, bounds),
+            ..
+        } = plot.show(ui, |plot_ui| {
+            plot_ui.points(points);
+            (plot_ui.pointer_coordinate(), plot_ui.plot_bounds())
+        });
+
+        // Hover coordinates check for rendering on-demand details
+        if let Some(coord) = pointer_coordinate {
+            let bounds_width = bounds.width();
+            let bounds_height = bounds.height();
+
+            if bounds_width > 0.0 && bounds_height > 0.0 {
+                let mut closest_node_idx = None;
+                let mut min_dist_sq = f64::INFINITY;
+
+                for &(idx, size) in &self.top_files {
+                    let node = &snapshot.nodes[idx as usize];
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let age_days = if max_time > node.modified_timestamp {
+                        (max_time - node.modified_timestamp) as f64 / 86400.0
+                    } else {
+                        0.0
+                    };
+
+                    #[allow(clippy::cast_precision_loss)]
+                    let size_log = (size as f64).log10();
+
+                    // Standardize aspect ratio coordinate scaling
+                    let dx = (coord.x - age_days) / bounds_width;
+                    let dy = (coord.y - size_log) / bounds_height;
+                    let dist_sq = dy.mul_add(dy, dx * dx);
+
+                    if dist_sq < min_dist_sq {
+                        min_dist_sq = dist_sq;
+                        closest_node_idx = Some(idx);
+                    }
+                }
+
+                // Tooltip displays if within visual vicinity (0.02 screen-radius bounds)
+                if min_dist_sq < 0.0004
+                    && let Some(node_idx) = closest_node_idx
+                {
+                    let node = &snapshot.nodes[node_idx as usize];
+                    let path_str = snapshot.get_full_path(node_idx);
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(node.size)
+                        .to_string();
+
+                    let age_days = if max_time > node.modified_timestamp {
+                        (max_time - node.modified_timestamp) / 86400
+                    } else {
+                        0
+                    };
+
+                    eframe::egui::Tooltip::always_open(
+                        ui.ctx().clone(),
+                        ui.layer_id(),
+                        eframe::egui::Id::new("scatter_tooltip"),
+                        eframe::egui::PopupAnchor::Pointer,
+                    )
+                    .show(|ui| {
+                        ui.label(format!("📄 Path: {path_str}"));
+                        ui.label(format!("💾 Size: {size_str}"));
+                        ui.label(format!("⏳ Age: {age_days} days unmodified"));
+                    });
+                }
+            }
+        }
     }
 }
