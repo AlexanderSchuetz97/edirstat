@@ -99,8 +99,8 @@ impl super::StatComponent for ExtensionBoxplotChart {
     ) {
         use super::StatsChart;
         let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
-        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr
-            || self.computed_spreads.is_empty();
+        let needs_rebuild =
+            self.last_snapshot_ptr != snapshot_ptr || self.computed_spreads.is_empty();
 
         if needs_rebuild {
             self.compute(snapshot);
@@ -119,8 +119,13 @@ impl super::StatComponent for ExtensionBoxplotChart {
         let spreads_count = self.computed_spreads.len();
 
         // Clone names to keep closure 'static
-        let ext_names: Vec<String> = self.computed_spreads.iter().map(|(ext, _)| ext.clone()).collect();
-        let x_formatter = move |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+        let ext_names: Vec<String> = self
+            .computed_spreads
+            .iter()
+            .map(|(ext, _)| ext.clone())
+            .collect();
+        let x_formatter = move |mark: egui_plot::GridMark,
+                                _range: &std::ops::RangeInclusive<f64>| {
             let val = mark.value.round() as usize;
             if val < ext_names.len() {
                 format!(".{}", ext_names[val])
@@ -191,5 +196,5 @@ impl super::StatComponent for ExtensionBoxplotChart {
                 plot_ui.box_plot(box_plot);
             }
         });
-     }
+    }
 }

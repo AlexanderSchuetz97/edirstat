@@ -74,8 +74,7 @@ impl super::StatComponent for TemporalTimelineChart {
     ) {
         use super::StatsChart;
         let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
-        let needs_rebuild =
-            self.last_snapshot_ptr != snapshot_ptr || self.sorted_days.is_empty();
+        let needs_rebuild = self.last_snapshot_ptr != snapshot_ptr || self.sorted_days.is_empty();
 
         if needs_rebuild {
             self.compute(snapshot);
@@ -115,15 +114,16 @@ impl super::StatComponent for TemporalTimelineChart {
             format_epoch_to_date(val)
         };
 
-        let y_space_formatter = |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
-            let val = mark.value;
-            if val <= 0.0 {
-                return String::new();
-            }
-            prettier_bytes::ByteFormatter::new()
-                .format(val as u64)
-                .to_string()
-        };
+        let y_space_formatter =
+            |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+                let val = mark.value;
+                if val <= 0.0 {
+                    return String::new();
+                }
+                prettier_bytes::ByteFormatter::new()
+                    .format(val as u64)
+                    .to_string()
+            };
 
         // Shared link structures
         let link_group_id = ui.id().with("linked_timeline_plots");

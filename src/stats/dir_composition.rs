@@ -240,8 +240,13 @@ impl super::StatComponent for DirCompositionChart {
         let children_count = self.children_composition.len();
 
         // Clone names to keep closure 'static
-        let children_names: Vec<String> = self.children_composition.iter().map(|(name, _, _)| name.clone()).collect();
-        let x_formatter = move |mark: egui_plot::GridMark, _range: &std::ops::RangeInclusive<f64>| {
+        let children_names: Vec<String> = self
+            .children_composition
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        let x_formatter = move |mark: egui_plot::GridMark,
+                                _range: &std::ops::RangeInclusive<f64>| {
             let val = mark.value.round() as usize;
             if val < children_count {
                 children_names[val].clone()

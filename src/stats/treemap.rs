@@ -3,7 +3,7 @@ use std::path::Path;
 use eframe::egui::{Color32, Rect, pos2};
 use smallvec::SmallVec;
 
-use super::{StatsChart, StatComponent, StatContext};
+use super::{StatComponent, StatContext, StatsChart};
 use crate::arena::{FileNode, NO_INDEX, StringPool};
 
 const NO_EXTENSION: &str = "(no extension)";
@@ -135,16 +135,8 @@ impl StatComponent for TreemapChart {
                 color: color_dark,
             });
 
-            combined_mesh.add_triangle(
-                base_vertex_idx,
-                base_vertex_idx + 1,
-                base_vertex_idx + 2,
-            );
-            combined_mesh.add_triangle(
-                base_vertex_idx,
-                base_vertex_idx + 2,
-                base_vertex_idx + 3,
-            );
+            combined_mesh.add_triangle(base_vertex_idx, base_vertex_idx + 1, base_vertex_idx + 2);
+            combined_mesh.add_triangle(base_vertex_idx, base_vertex_idx + 2, base_vertex_idx + 3);
         }
 
         painter.add(combined_mesh);
@@ -167,11 +159,7 @@ impl StatComponent for TreemapChart {
             // exact unified rect of its visible children on-screen.
             let mut target_rect: Option<eframe::egui::Rect> = None;
             for block in &self.cached_blocks {
-                if is_descendant(
-                    &snapshot.nodes,
-                    block.node_idx,
-                    selected_idx,
-                ) {
+                if is_descendant(&snapshot.nodes, block.node_idx, selected_idx) {
                     match target_rect {
                         None => target_rect = Some(block.rect),
                         Some(ref mut r) => *r = r.union(block.rect),
@@ -187,8 +175,7 @@ impl StatComponent for TreemapChart {
 
                 // 1. Draw Outer Expanding Glow (grows and fades)
                 let glow_alpha = 0.20f64.mul_add(pulse, 0.1);
-                let glow_color = crate::colors::GLOW_OUTER_BASE
-                    .linear_multiply(glow_alpha as f32);
+                let glow_color = crate::colors::GLOW_OUTER_BASE.linear_multiply(glow_alpha as f32);
                 let glow_thickness = 6.0f32.mul_add(pulse as f32, 4.0); // Oscillates thickness
                 painter.rect(
                     rect,
