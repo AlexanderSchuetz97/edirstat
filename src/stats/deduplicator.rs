@@ -1,9 +1,15 @@
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Read, Seek, SeekFrom},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
+
+use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 pub const HASH_BLOCK_SIZE: usize = 4096; // 4KB hashing block size
 pub const MULTI_RANGE_SPREAD_SIZE: u64 = 100 * 1024 * 1024; // 100MB spread size for multi-range checks
@@ -177,7 +183,7 @@ fn calculate_full_hash(
     Some(hasher.finalize().into())
 }
 
-pub type HashFn = dyn Fn(&str, u64, i64, i64) -> Option<[u8; 32]>;
+pub type HashFn = dyn Fn(&str, u64, i64, i64) -> Option<[u8; 32]> + Send + Sync;
 
 /// Main execution routine of the background deduplication runner
 #[allow(clippy::needless_pass_by_value)]
@@ -265,57 +271,80 @@ pub fn run_deduplication(
         progress.set_total(total_groups as u64);
         progress.set_pos(0);
 
-        let mut next_groups = Vec::new();
+        // Thread-safe atomic counter to track completed groups out-of-order
+        let completed_groups = std::sync::atomic::AtomicUsize::new(0);
 
-        for (grp_idx, group) in current_groups.into_iter().enumerate() {
-            if is_cancelled() {
-                return None;
-            }
+        // Process size blocks concurrently across all CPU cores
+        let next_groups_res: Result<Vec<Vec<DuplicateGroup>>, ()> = current_groups
+            .into_par_iter()
+            .map(|group| {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(());
+                }
 
-            progress.set_pos(grp_idx as u64);
+                let mut local_groups = Vec::new();
+                let mut hash_subgroups: HashMap<[u8; 32], Vec<u32>> = HashMap::new();
+                let mut failed_or_skipped = Vec::new();
 
-            let mut hash_subgroups: HashMap<[u8; 32], Vec<u32>> = HashMap::new();
-            let mut failed_or_skipped = Vec::new();
+                for &node_idx in &group.nodes {
+                    // Micro-check cancellation inside file iterations for tight responsiveness
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(());
+                    }
 
-            for &node_idx in &group.nodes {
-                let path = snapshot.get_full_path(node_idx);
-                progress.set_item(path.clone()); // Show currently hashed file in real-time
+                    let path = snapshot.get_full_path(node_idx);
 
-                let &(expected_mod, expected_cre) =
-                    expected_timestamps.get(&node_idx).unwrap_or(&(0, 0));
+                    // Throttle progress text updates slightly to avoid atomic cache-line bouncing
+                    if node_idx % 10 == 0 {
+                        progress.set_item(path.clone()); // Show currently hashed file in real-time
+                    }
 
-                if let Some(hash) = hash_fn(&path, group.size, expected_mod, expected_cre) {
-                    hash_subgroups.entry(hash).or_default().push(node_idx);
-                } else {
-                    // Check if file is still there and unchanged on disk
-                    if let Ok(meta) = std::fs::metadata(&path)
+                    let &(expected_mod, expected_cre) =
+                        expected_timestamps.get(&node_idx).unwrap_or(&(0, 0));
+
+                    if let Some(hash) = hash_fn(&path, group.size, expected_mod, expected_cre) {
+                        hash_subgroups.entry(hash).or_default().push(node_idx);
+                    } else if let Ok(meta) = std::fs::metadata(&path)
                         && meta.len() == group.size
                     {
+                        // Check if file is still there and unchanged on disk
                         failed_or_skipped.push(node_idx);
                     }
                 }
-            }
 
-            // Subgroups with duplicates
-            for (_, nodes) in hash_subgroups {
-                if nodes.len() >= 2 {
-                    next_groups.push(DuplicateGroup {
+                // Subgroups with duplicates
+                for (_, nodes) in hash_subgroups {
+                    if nodes.len() >= 2 {
+                        local_groups.push(DuplicateGroup {
+                            size: group.size,
+                            nodes,
+                        });
+                    }
+                }
+
+                // Too small files that were skipped are grouped back together
+                if failed_or_skipped.len() >= 2 {
+                    local_groups.push(DuplicateGroup {
                         size: group.size,
-                        nodes,
+                        nodes: failed_or_skipped,
                     });
                 }
-            }
 
-            // Too small files that were skipped are grouped back together
-            if failed_or_skipped.len() >= 2 {
-                next_groups.push(DuplicateGroup {
-                    size: group.size,
-                    nodes: failed_or_skipped,
-                });
-            }
+                // Increment progress position safely across worker threads
+                let current_progress = completed_groups.fetch_add(1, Ordering::Relaxed);
+                if current_progress.is_multiple_of(5) || current_progress + 1 == total_groups {
+                    progress.set_pos(current_progress as u64 + 1);
+                }
+
+                Ok(local_groups)
+            })
+            .collect(); // Propagates a short-circuit Err if canceled mid-scan
+
+        // Flatten the thread-isolated vector chunks back down into a single lineage line
+        match next_groups_res {
+            Ok(chunks) => Some(chunks.into_iter().flatten().collect()),
+            Err(()) => None,
         }
-
-        Some(next_groups)
     };
 
     // --- Phase 2: Prefix Hashing ---
