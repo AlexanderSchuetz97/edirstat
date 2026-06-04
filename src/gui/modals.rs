@@ -11,6 +11,79 @@ pub enum ActiveModal {
 }
 
 impl GuiApp {
+    /// Performs a zero-copy update to the active snapshot by unlinking deleted nodes,
+    /// backtracking size weights up to the root, and swapping the updated tree structure.
+    pub(crate) fn remove_nodes_from_snapshot(&self, target_indices: &[u32]) {
+        if target_indices.is_empty() {
+            return;
+        }
+
+        let current_snap = self.shared_state.current_snapshot.load();
+        let mut cloned_nodes = (*current_snap.nodes).clone();
+
+        for &node_idx in target_indices {
+            let node_idx = node_idx as usize;
+            if node_idx >= cloned_nodes.len() {
+                continue;
+            }
+
+            let node_size = cloned_nodes[node_idx].size;
+            let parent_idx = cloned_nodes[node_idx].parent;
+            let is_dir = cloned_nodes[node_idx].is_directory();
+
+            // 1. Unlink the deleted item from its parent's sibling chain
+            if parent_idx != crate::arena::NO_INDEX {
+                let p_idx = parent_idx as usize;
+                let mut prev_sibling: Option<u32> = None;
+                let mut curr_sibling = cloned_nodes[p_idx].first_child;
+
+                while curr_sibling != crate::arena::NO_INDEX {
+                    if curr_sibling == node_idx as u32 {
+                        let next_sib = cloned_nodes[node_idx].next_sibling;
+                        if let Some(prev) = prev_sibling {
+                            cloned_nodes[prev as usize].next_sibling = next_sib;
+                        } else {
+                            cloned_nodes[p_idx].first_child = next_sib;
+                        }
+                        break;
+                    }
+                    // Explicitly advance the pointer
+                    prev_sibling = Some(curr_sibling);
+                    curr_sibling = cloned_nodes[curr_sibling as usize].next_sibling;
+                }
+            }
+
+            // 2. Roll back size metrics and file count up the ancestral line
+            let mut current_parent = if parent_idx == crate::arena::NO_INDEX {
+                None
+            } else {
+                Some(parent_idx)
+            };
+            while let Some(p_idx) = current_parent {
+                let p_node = &mut cloned_nodes[p_idx as usize];
+                p_node.size = p_node.size.saturating_sub(node_size);
+                if !is_dir {
+                    p_node.file_count = p_node.file_count.saturating_sub(1);
+                }
+                current_parent = p_node.parent_opt();
+            }
+
+            // 3. Isolate the node
+            cloned_nodes[node_idx].size = 0;
+            cloned_nodes[node_idx].file_count = 0;
+            cloned_nodes[node_idx].first_child = crate::arena::NO_INDEX;
+            cloned_nodes[node_idx].next_sibling = crate::arena::NO_INDEX;
+        }
+
+        let new_snapshot = crate::arena::FileArenaSnapshot {
+            nodes: std::sync::Arc::new(cloned_nodes),
+            string_pool: current_snap.string_pool.clone(),
+        };
+        self.shared_state
+            .current_snapshot
+            .store(std::sync::Arc::new(new_snapshot));
+    }
+
     pub fn render_modals(&mut self, ctx: &egui::Context, snapshot: &FileArenaSnapshot) {
         // Render Permanent Deletion Modal Popup
         if self.active_modal == Some(ActiveModal::Delete) {
@@ -78,7 +151,8 @@ impl GuiApp {
                                             if let Err(e) = delete_result {
                                                 println!("Failed to delete path: {e}");
                                             } else {
-                                                // Reset selection upon deletion
+                                                // Dynamic backpropagation updates the tree before dropping active choice
+                                                self.remove_nodes_from_snapshot(&[idx]);
                                                 self.selected_node_idx = None;
                                             }
                                         }
@@ -173,43 +247,47 @@ impl GuiApp {
                                         .strong()
                                 ).fill(theme::DELETION_BORDER);
 
-                                let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
-                                if confirm_res.clicked() {
-                                    let mut successfully_deleted = Vec::new();
-                                    for &idx in &self.delete_duplicates_indices {
-                                        let path_str = snapshot.get_full_path(idx);
-                                        let path = std::path::Path::new(&path_str);
-                                        if path.exists() {
-                                            let delete_result = if path.is_dir() {
-                                                std::fs::remove_dir_all(path)
-                                            } else {
-                                                std::fs::remove_file(path)
-                                            };
+                                    let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
+                                    if confirm_res.clicked() {
+                                        let mut successfully_deleted = Vec::new();
+                                        for &idx in &self.delete_duplicates_indices {
+                                            let path_str = snapshot.get_full_path(idx);
+                                            let path = std::path::Path::new(&path_str);
+                                            if path.exists() {
+                                                let delete_result = if path.is_dir() {
+                                                    std::fs::remove_dir_all(path)
+                                                } else {
+                                                    std::fs::remove_file(path)
+                                                };
 
-                                            if let Err(e) = delete_result {
-                                                println!("Failed to delete path: {e}");
+                                                if let Err(e) = delete_result {
+                                                    println!("Failed to delete path: {e}");
+                                                } else {
+                                                    successfully_deleted.push(idx);
+                                                }
                                             } else {
                                                 successfully_deleted.push(idx);
                                             }
-                                        } else {
-                                            successfully_deleted.push(idx);
                                         }
-                                    }
 
-                                    // Prune the deleted files from the deduplicator in-memory results list
-                                    {
-                                        let mut results = self.deduplicator_results.write();
-                                        for group in results.iter_mut() {
-                                            group.nodes.retain(|idx| !successfully_deleted.contains(idx));
+                                        // Prune the deleted files from the deduplicator in-memory results list
+                                        {
+                                            let mut results = self.deduplicator_results.write();
+                                            for group in results.iter_mut() {
+                                                group.nodes.retain(|idx| !successfully_deleted.contains(idx));
+                                            }
+                                            results.retain(|group| group.nodes.len() >= 2);
                                         }
-                                        results.retain(|group| group.nodes.len() >= 2);
-                                    }
 
-                                    // Clear selection and close modal
-                                    self.selected_duplicates.retain(|idx| !successfully_deleted.contains(idx));
-                                    self.delete_duplicates_indices.clear();
-                                    self.active_modal = None;
-                                }
+                                        // Clear selection and close modal
+                                        self.selected_duplicates.retain(|idx| !successfully_deleted.contains(idx));
+
+                                        // Execute structural adjustments over the cloned tree all at once
+                                        self.remove_nodes_from_snapshot(&successfully_deleted);
+
+                                        self.delete_duplicates_indices.clear();
+                                        self.active_modal = None;
+                                    }
                             });
                         });
                     });
