@@ -368,7 +368,17 @@ impl GuiApp {
                                         {
                                             let mut results = self.deduplicator_results.write();
                                             for group in results.iter_mut() {
-                                                group.nodes.retain(|idx| !successfully_deleted.contains(idx));
+                                                let mut i = 0;
+                                                while i < group.nodes.len() {
+                                                    if successfully_deleted.contains(&group.nodes[i]) {
+                                                        group.nodes.remove(i);
+                                                        if i < group.file_ids.len() {
+                                                            group.file_ids.remove(i);
+                                                        }
+                                                    } else {
+                                                        i += 1;
+                                                    }
+                                                }
                                             }
                                             results.retain(|group| group.nodes.len() >= 2);
                                         }
@@ -480,7 +490,17 @@ impl GuiApp {
                                     {
                                         let mut results = self.deduplicator_results.write();
                                         for group in results.iter_mut() {
-                                            group.nodes.retain(|idx| !successfully_deleted.contains(idx));
+                                            let mut i = 0;
+                                            while i < group.nodes.len() {
+                                                if successfully_deleted.contains(&group.nodes[i]) {
+                                                    group.nodes.remove(i);
+                                                    if i < group.file_ids.len() {
+                                                        group.file_ids.remove(i);
+                                                    }
+                                                } else {
+                                                    i += 1;
+                                                }
+                                            }
                                         }
                                         results.retain(|group| group.nodes.len() >= 2);
                                     }

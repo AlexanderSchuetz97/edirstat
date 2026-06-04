@@ -18,6 +18,7 @@ pub const MULTI_RANGE_SPREAD_SIZE: u64 = 100 * 1024 * 1024; // 100MB spread size
 pub struct DuplicateGroup {
     pub size: u64,
     pub nodes: Vec<u32>,
+    pub file_ids: Vec<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -253,7 +254,11 @@ pub fn run_deduplication(
     let mut current_groups: Vec<DuplicateGroup> = size_groups
         .into_iter()
         .filter(|(_, nodes)| nodes.len() >= 2)
-        .map(|(size, nodes)| DuplicateGroup { size, nodes })
+        .map(|(size, nodes)| DuplicateGroup {
+            size,
+            nodes,
+            file_ids: Vec::new(),
+        })
         .collect();
 
     // Sort descending by size to present largest first
@@ -318,6 +323,7 @@ pub fn run_deduplication(
                         local_groups.push(DuplicateGroup {
                             size: group.size,
                             nodes,
+                            file_ids: Vec::new(),
                         });
                     }
                 }
@@ -327,6 +333,7 @@ pub fn run_deduplication(
                     local_groups.push(DuplicateGroup {
                         size: group.size,
                         nodes: failed_or_skipped,
+                        file_ids: Vec::new(),
                     });
                 }
 
@@ -474,6 +481,7 @@ pub fn run_deduplication(
         progress.set_pos(grp_idx as u64);
 
         let mut validated_nodes = Vec::new();
+        let mut validated_file_ids = Vec::new();
 
         for &node_idx in &group.nodes {
             let path = snapshot.get_full_path(node_idx);
@@ -498,7 +506,9 @@ pub fn run_deduplication(
                 });
 
                 if modified_ok && created_ok {
+                    let file_id = crate::engine::traversal::get_file_id(&meta);
                     validated_nodes.push(node_idx);
+                    validated_file_ids.push(file_id);
                 }
             }
         }
@@ -507,6 +517,7 @@ pub fn run_deduplication(
             final_groups.push(DuplicateGroup {
                 size: group.size,
                 nodes: validated_nodes,
+                file_ids: validated_file_ids,
             });
         }
     }
@@ -518,7 +529,19 @@ pub fn run_deduplication(
 
     let reclaimable: u64 = final_groups
         .iter()
-        .map(|g| g.size * (g.nodes.len() as u64 - 1))
+        .map(|g| {
+            let unique_count = {
+                let mut ids: Vec<(u64, u64)> = g.file_ids.iter().copied().filter(|&id| id != (0, 0)).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids.len()
+            };
+            if unique_count > 0 {
+                g.size * (unique_count as u64 - 1)
+            } else {
+                g.size * (g.nodes.len() as u64 - 1)
+            }
+        })
         .sum();
 
     let space_str = prettier_bytes::ByteFormatter::new()
@@ -531,4 +554,73 @@ pub fn run_deduplication(
         "Finished in {duration:.2?}! Found {final_groups_count} duplicate groups. Potential reclaimable space: {space_str}"
     ));
     progress.finish();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinator::{Coordinator, SharedState};
+    use crate::engine::traversal::TraversalEngine;
+    use parking_lot::RwLock;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn test_deduplication_with_hardlink() -> Result<(), crate::EdirstatError> {
+        let temp_dir = std::env::current_dir()?
+            .join("target")
+            .join("test_deduplicator");
+        let _ = std::fs::remove_dir_all(&temp_dir); // Clean old
+        std::fs::create_dir_all(&temp_dir)?;
+
+        let file1_path = temp_dir.join("file1.txt");
+        let file2_path = temp_dir.join("file2.txt");
+        let duplicate_path = temp_dir.join("duplicate.txt");
+
+        let content = b"hello identical content! hello identical content!";
+        std::fs::write(&file1_path, content)?;
+        // Create a hardlink
+        std::fs::hard_link(&file1_path, &file2_path)?;
+        // Create a regular duplicate file
+        std::fs::write(&duplicate_path, content)?;
+
+        let shared_state = Arc::new(SharedState::new());
+        let engine = TraversalEngine::new();
+        let (tx, rx) = crossbeam::channel::unbounded();
+
+        let handle = engine.start_traversal(temp_dir.clone(), tx)?;
+        let mut coordinator = Coordinator::new(rx, shared_state.clone());
+        coordinator.run_coordinator_loop(&temp_dir.to_string_lossy());
+        let _ = handle.join();
+
+        let snapshot = shared_state.current_snapshot.load();
+        assert!(!snapshot.nodes.is_empty());
+
+        let results = Arc::new(RwLock::new(Vec::new()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let progress = atomic_progress::Progress::new_spinner("Deduplicator");
+        let config = DeduplicatorConfig {
+            min_size: 1,
+            ignore_system: false,
+            ignore_hidden: false,
+        };
+
+        run_deduplication(snapshot.clone(), progress, results.clone(), cancel, config);
+
+        let groups = results.read();
+        assert_eq!(groups.len(), 1);
+
+        let group = &groups[0];
+        assert_eq!(group.nodes.len(), 3);
+        assert_eq!(group.file_ids.len(), 3);
+
+        // Verify we have 2 unique inodes
+        let mut unique_ids = group.file_ids.clone();
+        unique_ids.sort_unstable();
+        unique_ids.dedup();
+        assert_eq!(unique_ids.len(), 2);
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
 }

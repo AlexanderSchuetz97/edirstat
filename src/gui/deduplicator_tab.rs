@@ -22,6 +22,7 @@ pub struct DuplicateRow {
     pub created_time_str: String,
     pub modified_time_str: String,
     pub is_original: bool,
+    pub is_hardlink: bool,
 }
 
 /// Format epoch timestamp into YYYY-MM-DD HH:MM:SS format
@@ -333,11 +334,20 @@ impl super::GuiApp {
 
         let mut flat_rows = Vec::with_capacity(current_total_files);
         for (g_idx, group) in active_groups.iter().enumerate() {
-            let mut nodes_sorted = group.nodes.clone();
+            // Pair each node with its file ID
+            let mut paired: Vec<(u32, (u64, u64))> = group.nodes.iter().copied()
+                .zip(group.file_ids.iter().copied())
+                .collect();
+            if paired.len() < group.nodes.len() {
+                paired = group.nodes.iter().copied()
+                    .map(|idx| (idx, (0, 0)))
+                    .collect();
+            }
+
             // Sort chronologically (oldest modified first), using shorter filename length as a tie-breaker
-            nodes_sorted.sort_by(|&a, &b| {
-                let node_a = &snapshot.nodes[a as usize];
-                let node_b = &snapshot.nodes[b as usize];
+            paired.sort_by(|a, b| {
+                let node_a = &snapshot.nodes[a.0 as usize];
+                let node_b = &snapshot.nodes[b.0 as usize];
 
                 let mod_cmp = node_a.modified_timestamp.cmp(&node_b.modified_timestamp);
                 if mod_cmp != std::cmp::Ordering::Equal {
@@ -354,7 +364,20 @@ impl super::GuiApp {
                 name_a.len().cmp(&name_b.len())
             });
 
-            for (f_idx, &node_idx) in nodes_sorted.iter().enumerate() {
+            // Calculate total reclaimable space for the group based on unique inodes
+            let unique_inodes_count = {
+                let mut ids: Vec<(u64, u64)> = paired.iter().map(|p| p.1).filter(|&id| id != (0, 0)).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids.len()
+            };
+            let total_reclaimable = if unique_inodes_count > 0 {
+                group.size * (unique_inodes_count as u64 - 1)
+            } else {
+                group.size * (paired.len().saturating_sub(1) as u64)
+            };
+
+            for (f_idx, &(node_idx, file_id)) in paired.iter().enumerate() {
                 let full_path = snapshot.get_full_path(node_idx);
                 let path = std::path::Path::new(&full_path);
 
@@ -370,21 +393,26 @@ impl super::GuiApp {
 
                 let is_original = f_idx == 0;
 
+                // A node is a hardlink if it shares its file ID with another node in the group
+                let is_hardlink = file_id != (0, 0)
+                    && paired.iter().any(|other| other.0 != node_idx && other.1 == file_id);
+
                 let size_str = prettier_bytes::ByteFormatter::new()
                     .format(group.size)
                     .to_string();
 
                 let reclaimable_str = if is_original {
-                    // For the original row, show the total reclaimable space for the entire group
-                    let dup_count = nodes_sorted.len().saturating_sub(1) as u64;
-                    let total_reclaimable = dup_count * group.size;
                     prettier_bytes::ByteFormatter::new()
                         .format(total_reclaimable)
                         .to_string()
                 } else {
-                    // For duplicate rows, show individual duplicate size
+                    let individual_reclaimable = if is_hardlink {
+                        0
+                    } else {
+                        group.size
+                    };
                     prettier_bytes::ByteFormatter::new()
-                        .format(group.size)
+                        .format(individual_reclaimable)
                         .to_string()
                 };
 
@@ -402,6 +430,7 @@ impl super::GuiApp {
                     created_time_str,
                     modified_time_str,
                     is_original,
+                    is_hardlink,
                 });
             }
         }
@@ -623,6 +652,22 @@ impl super::GuiApp {
                                             .color(egui::Color32::from_rgb(245, 158, 11)) // Orange for duplicate
                                         };
                                         ui.label(name_rich).on_hover_text(&row_data.filename);
+                                        if row_data.is_hardlink {
+                                            ui.add_space(4.0);
+                                            let frame = egui::Frame::new()
+                                                .fill(ui.visuals().selection.bg_fill.linear_multiply(0.15))
+                                                .stroke(egui::Stroke::new(1.0, ui.visuals().selection.stroke.color.linear_multiply(0.5)))
+                                                .inner_margin(egui::Margin::symmetric(4, 2))
+                                                .corner_radius(3.0);
+                                            frame.show(ui, |ui| {
+                                                ui.label(
+                                                    egui::RichText::new("Hardlink")
+                                                        .size(10.0)
+                                                        .strong()
+                                                        .color(ui.visuals().selection.stroke.color),
+                                                );
+                                            });
+                                        }
                                     },
                                 );
                             });
