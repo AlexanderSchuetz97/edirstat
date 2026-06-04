@@ -6,8 +6,10 @@ use crate::arena::FileArenaSnapshot;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveModal {
     Delete,
+    Trash,
     About,
     DeleteDuplicates,
+    TrashDuplicates,
 }
 
 impl GuiApp {
@@ -181,6 +183,98 @@ impl GuiApp {
             }
         }
 
+        // Render Move to Trash Modal Popup
+        if self.active_modal == Some(ActiveModal::Trash) {
+            let idx_opt = self.delete_node_idx;
+            if let Some(idx) = idx_opt {
+                let path_str = snapshot.get_full_path(idx);
+                let size_str = prettier_bytes::ByteFormatter::new()
+                    .format(snapshot.nodes[idx as usize].size)
+                    .to_string();
+
+                let mut open = true;
+                egui::Window::new("♻ MOVE TO TRASH")
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .collapsible(false)
+                    .resizable(false)
+                    .open(&mut open)
+                    .frame(
+                        egui::Frame::window(&ctx.global_style())
+                            .stroke(egui::Stroke::new(2.0, theme::TRASH_BORDER))
+                    ) // Thick blue border outline
+                    .show(ctx, |ui| {
+                        ui.vertical(|ui| {
+                            let path = std::path::Path::new(&path_str);
+                            if path.exists() {
+                                ui.heading(
+                                    egui::RichText::new("♻ Move to Trash")
+                                        .color(theme::TRASH_WARNING)
+                                        .strong()
+                                );
+                                ui.separator();
+
+                                ui.label("You are about to move the following path to the trash:");
+                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
+                                ui.label(format!("Total Size: {size_str}"));
+                                ui.separator();
+
+                                ui.label("This will move the selected path and all its contents to your system recycle bin/trash, where it can be recovered or permanently deleted later.");
+                                ui.add_space(8.0);
+
+                                ui.checkbox(&mut self.delete_confirm_checked, "I confirm that I want to move this to the trash.");
+                                ui.add_space(8.0);
+
+                                ui.horizontal(|ui| {
+                                    if ui.button("Cancel").clicked() {
+                                        self.active_modal = None;
+                                    }
+
+                                    // Blue confirm button
+                                    let confirm_btn = egui::Button::new(
+                                        egui::RichText::new("♻ Yes, Move to Trash")
+                                            .color(egui::Color32::WHITE)
+                                            .strong()
+                                    ).fill(theme::TRASH_BORDER);
+
+                                    let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
+                                    if confirm_res.clicked() {
+                                        let path = std::path::Path::new(&path_str);
+                                        if path.exists() {
+                                            let trash_result = trash::delete(path);
+
+                                            if let Err(e) = trash_result {
+                                                println!("Failed to move path to trash: {e}");
+                                            } else {
+                                                // Dynamic backpropagation updates the tree before dropping active choice
+                                                self.remove_nodes_from_snapshot(&[idx]);
+                                                self.selected_node_idx = None;
+                                            }
+                                        }
+                                        self.active_modal = None;
+                                    }
+                                });
+                            } else {
+                                ui.heading(
+                                    egui::RichText::new("❌ Path Does Not Exist!")
+                                        .color(theme::DELETION_WARNING)
+                                        .strong()
+                                );
+                                ui.separator();
+                                ui.label("Error: The path you are trying to trash does not exist on disk.");
+                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
+                                ui.add_space(8.0);
+                                if ui.button("Close").clicked() {
+                                    self.active_modal = None;
+                                }
+                            }
+                        });
+                    });
+                if !open {
+                    self.active_modal = None;
+                }
+            }
+        }
+
         // Render Permanent Deduplication Modal Popup
         if self.active_modal == Some(ActiveModal::DeleteDuplicates) {
             let idxs = self.delete_duplicates_indices.clone();
@@ -288,6 +382,118 @@ impl GuiApp {
                                         self.delete_duplicates_indices.clear();
                                         self.active_modal = None;
                                     }
+                            });
+                        });
+                    });
+                if !open {
+                    self.active_modal = None;
+                }
+            }
+        }
+
+        // Render Move to Trash Deduplication Modal Popup
+        if self.active_modal == Some(ActiveModal::TrashDuplicates) {
+            let idxs = self.delete_duplicates_indices.clone();
+            if idxs.is_empty() {
+                self.active_modal = None;
+            } else {
+                let count = idxs.len();
+                let total_size: u64 = idxs
+                    .iter()
+                    .map(|&idx| snapshot.nodes[idx as usize].size)
+                    .sum();
+                let size_str = prettier_bytes::ByteFormatter::new()
+                    .format(total_size)
+                    .to_string();
+
+                let mut open = true;
+                egui::Window::new("♻ MOVE DUPLICATES TO TRASH")
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .collapsible(false)
+                    .resizable(true)
+                    .default_width(500.0)
+                    .open(&mut open)
+                    .frame(
+                        egui::Frame::window(&ctx.global_style())
+                            .stroke(egui::Stroke::new(2.0, theme::TRASH_BORDER))
+                    ) // Thick blue border outline
+                    .show(ctx, |ui| {
+                        ui.vertical(|ui| {
+                            ui.heading(
+                                egui::RichText::new("♻ Move Duplicates to Trash")
+                                    .color(theme::TRASH_WARNING)
+                                    .strong()
+                            );
+                            ui.separator();
+
+                            ui.label(format!("You are about to move {count} duplicate files to the trash:"));
+                            ui.colored_label(ui.visuals().strong_text_color(), format!("Total space to be reclaimed: {size_str}"));
+                            ui.separator();
+
+                            ui.label("Files to be moved:");
+                            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                                for &idx in &idxs {
+                                    let path_str = snapshot.get_full_path(idx);
+                                    ui.small(&path_str);
+                                }
+                            });
+                            ui.separator();
+
+                            ui.label("All selected files will be moved to the recycle bin/trash.");
+                            ui.add_space(8.0);
+
+                            ui.checkbox(&mut self.delete_confirm_checked, "I confirm that I want to move these files to the trash.");
+                            ui.add_space(8.0);
+
+                            ui.horizontal(|ui| {
+                                if ui.button("Cancel").clicked() {
+                                    self.active_modal = None;
+                                }
+
+                                // Blue confirm button
+                                let confirm_btn = egui::Button::new(
+                                    egui::RichText::new("♻ Yes, Move Selected to Trash")
+                                        .color(egui::Color32::WHITE)
+                                        .strong()
+                                ).fill(theme::TRASH_BORDER);
+
+                                let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
+                                if confirm_res.clicked() {
+                                    let mut successfully_deleted = Vec::new();
+                                    for &idx in &self.delete_duplicates_indices {
+                                        let path_str = snapshot.get_full_path(idx);
+                                        let path = std::path::Path::new(&path_str);
+                                        if path.exists() {
+                                            let trash_result = trash::delete(path);
+
+                                            if let Err(e) = trash_result {
+                                                println!("Failed to move path to trash: {e}");
+                                            } else {
+                                                successfully_deleted.push(idx);
+                                            }
+                                        } else {
+                                            successfully_deleted.push(idx);
+                                        }
+                                    }
+
+                                    // Prune the deleted files from the deduplicator in-memory results list
+                                    {
+                                        let mut results = self.deduplicator_results.write();
+                                        for group in results.iter_mut() {
+                                            group.nodes.retain(|idx| !successfully_deleted.contains(idx));
+                                        }
+                                        results.retain(|group| group.nodes.len() >= 2);
+                                    }
+
+                                    // Clear selection and close modal
+                                    self.selected_duplicates.retain(|idx| !successfully_deleted.contains(idx));
+
+                                    // Execute structural adjustments over the cloned tree all at once
+                                    self.remove_nodes_from_snapshot(&successfully_deleted);
+
+                                    self.delete_duplicates_indices.clear();
+                                    self.active_modal = None;
+                                }
                             });
                         });
                     });

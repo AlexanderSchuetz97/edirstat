@@ -500,6 +500,26 @@ impl super::GuiApp {
                 .format(total_selected_size)
                 .to_string();
 
+            let trash_btn = ui.add_enabled(
+                has_selection,
+                egui::Button::new(
+                    egui::RichText::new(format!(
+                        "♻ Move Selected to Trash ({} files, {})",
+                        self.selected_duplicates.len(),
+                        reclaim_str
+                    ))
+                    .color(egui::Color32::WHITE)
+                    .strong(),
+                )
+                .fill(crate::colors::TRASH_BORDER),
+            );
+
+            if trash_btn.clicked() {
+                self.delete_duplicates_indices = self.selected_duplicates.iter().copied().collect();
+                self.delete_confirm_checked = false;
+                self.active_modal = Some(crate::gui::ActiveModal::TrashDuplicates);
+            }
+
             let delete_btn = ui.add_enabled(
                 has_selection,
                 egui::Button::new(

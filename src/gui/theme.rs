@@ -15,6 +15,10 @@ pub const TREEMAP_DIR_FALLBACK: Color32 = Color32::from_gray(100);
 pub const DELETION_BORDER: Color32 = Color32::from_rgb(220, 38, 38); // Dark red
 pub const DELETION_WARNING: Color32 = Color32::from_rgb(239, 68, 68); // Bright red
 
+// Trash Modal
+pub const TRASH_BORDER: Color32 = Color32::from_rgb(37, 99, 235); // Dark blue/indigo
+pub const TRASH_WARNING: Color32 = Color32::from_rgb(96, 165, 250); // Light blue
+
 // Directory Tree Guidelines
 pub const INDENT_GUIDELINE: Color32 = Color32::from_gray(65);
 

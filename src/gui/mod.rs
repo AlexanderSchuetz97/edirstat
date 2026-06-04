@@ -212,6 +212,14 @@ impl GuiApp {
             ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
         }
 
+        let trash_btn = ui.add_enabled(has_selection, egui::Button::new("♻ Move to Trash"));
+        if trash_btn.clicked() {
+            self.active_modal = Some(ActiveModal::Trash);
+            self.delete_confirm_checked = false;
+            self.delete_node_idx = self.selected_node_idx;
+            ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
+        }
+
         let delete_btn = ui.add_enabled(has_selection, egui::Button::new("🗑 Delete (Permanent)"));
         if delete_btn.clicked() {
             self.active_modal = Some(ActiveModal::Delete);
