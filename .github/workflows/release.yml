@@ -62,8 +62,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-macos:
-    name: Build & Upload macOS (${{ matrix.target }})
+    name: Build & Package macOS (${{ matrix.target }})
     runs-on: macos-latest
+    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     strategy:
       fail-fast: false
       matrix:
@@ -79,7 +80,6 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v6
 
-      # Installs the specific toolchain directly onto the host Mac VM
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -94,14 +94,71 @@ jobs:
       - name: Compile optimized release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Stage Release Asset
+      - name: Structure App Bundle & Ad-Hoc Sign
         run: |
-          mkdir -p staging
-          cp ${{ matrix.binary_path }} staging/${{ matrix.asset_name }}
+          # 1. Create standard macOS App Bundle layout
+          APP_DIR="staging/eDirStat.app"
+          mkdir -p "$APP_DIR/Contents/MacOS"
+          mkdir -p "$APP_DIR/Contents/Resources"
+
+          # 2. Move compiled binary into position
+          cp ${{ matrix.binary_path }} "$APP_DIR/Contents/MacOS/edirstat"
+
+          # 3. Automatically compile the .icns asset using standard Apple tooling
+          mkdir -p eDirStat.iconset
+          sips -z 16 16     assets/img/icon-256x.png --out eDirStat.iconset/icon_16x16.png
+          sips -z 32 32     assets/img/icon-256x.png --out eDirStat.iconset/icon_16x16@2x.png
+          sips -z 32 32     assets/img/icon-256x.png --out eDirStat.iconset/icon_32x32.png
+          sips -z 64 64     assets/img/icon-256x.png --out eDirStat.iconset/icon_32x32@2x.png
+          sips -z 128 128   assets/img/icon-256x.png --out eDirStat.iconset/icon_128x128.png
+          sips -z 256 256   assets/img/icon-256x.png --out eDirStat.iconset/icon_128x128@2x.png
+          cp assets/img/icon-256x.png eDirStat.iconset/icon_256x256.png
+
+          iconutil -c icns eDirStat.iconset --output "$APP_DIR/Contents/Resources/icon.icns"
+
+          # 4. Generate the Info.plist meta file with icon mapping links
+          cat <<EOF > "$APP_DIR/Contents/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>edirstat</string>
+              <key>CFBundleIconFile</key>
+              <string>icon.icns</string>
+              <key>CFBundleIdentifier</key>
+              <string>to.cody.edirstat</string>
+              <key>CFBundleName</key>
+              <string>eDirStat</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.1.0</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.15</string>
+          </dict>
+          </plist>
+          EOF
+
+          # 5. Cryptographically sign the bundle locally with sandboxing entitlements
+          codesign --force --options runtime --entitlements entitlements.plist -s - "$APP_DIR"
+
+          # 6. Compress app bundle into a standard .zip archive to protect folder permissions
+          cd staging
+          zip -r "../${{ matrix.asset_name }}.zip" eDirStat.app
+          cd ..
 
       - name: Upload Asset to GitHub Release
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v3
         with:
-          files: staging/${{ matrix.asset_name }}
+          files: ${{ matrix.asset_name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Asset as Artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset_name }}.zip
+          path: ${{ matrix.asset_name }}.zip
