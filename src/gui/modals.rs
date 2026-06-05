@@ -12,6 +12,8 @@ pub enum ActiveModal {
     About,
     DeleteDuplicates,
     TrashDuplicates,
+    HardlinkDuplicates,
+    SoftlinkDuplicates,
 }
 
 fn count_nested_stats(
@@ -288,6 +290,158 @@ impl GuiApp {
         }
     }
 
+    pub(crate) fn execute_hardlinking(
+        &mut self,
+        target_indices: &[u32],
+        snapshot: &FileArenaSnapshot,
+    ) {
+        let mut successfully_linked = Vec::new();
+        let results_guard = self.deduplicator_results.read();
+
+        for &idx in target_indices {
+            let Some(group) = results_guard.groups.iter().find(|g| g.nodes.contains(&idx)) else {
+                continue;
+            };
+
+            // Find a source node in the group that is NOT being replaced to link against
+            let Some(&src_idx) = group.nodes.iter().find(|&&n| !target_indices.contains(&n)) else {
+                continue;
+            };
+
+            let src_path_str = snapshot.get_full_path(src_idx);
+            let dst_path_str = snapshot.get_full_path(idx);
+            let src_path = std::path::Path::new(&src_path_str);
+            let dst_path = std::path::Path::new(&dst_path_str);
+
+            if src_path.exists() && dst_path.exists() {
+                let temp_dst = dst_path.with_extension("tmp_hl_bak");
+                if std::fs::rename(dst_path, &temp_dst).is_ok() {
+                    if std::fs::hard_link(src_path, dst_path).is_ok() {
+                        let _ = std::fs::remove_file(&temp_dst);
+                        successfully_linked.push(idx);
+                    } else {
+                        // Restore backup on failure
+                        let _ = std::fs::rename(&temp_dst, dst_path);
+                    }
+                }
+            }
+        }
+
+        if !successfully_linked.is_empty() {
+            drop(results_guard);
+            {
+                let mut results = self.deduplicator_results.write();
+                for group in &mut results.groups {
+                    let has_any = group.nodes.iter().any(|n| successfully_linked.contains(n));
+                    if has_any {
+                        for (i, &node_idx) in group.nodes.iter().enumerate() {
+                            let path_str = snapshot.get_full_path(node_idx);
+                            if let Ok(meta) = std::fs::metadata(path_str) {
+                                let file_id = crate::engine::traversal::get_file_id(&meta);
+                                if i < group.file_ids.len() {
+                                    group.file_ids[i] = file_id;
+                                }
+                            }
+                        }
+                    }
+                }
+                results.rebuild_flat_rows(snapshot);
+            }
+
+            self.selected_duplicates
+                .retain(|idx| !successfully_linked.contains(idx));
+        }
+    }
+
+    pub(crate) fn execute_softlinking(
+        &mut self,
+        target_indices: &[u32],
+        snapshot: &FileArenaSnapshot,
+    ) {
+        let mut successfully_linked = Vec::new();
+        let results_guard = self.deduplicator_results.read();
+
+        for &idx in target_indices {
+            let Some(group) = results_guard.groups.iter().find(|g| g.nodes.contains(&idx)) else {
+                continue;
+            };
+
+            // Find a source node in the group that is NOT being replaced to link against
+            let Some(&src_idx) = group.nodes.iter().find(|&&n| !target_indices.contains(&n)) else {
+                continue;
+            };
+
+            let src_path_str = snapshot.get_full_path(src_idx);
+            let dst_path_str = snapshot.get_full_path(idx);
+            let src_path = std::path::Path::new(&src_path_str);
+            let dst_path = std::path::Path::new(&dst_path_str);
+
+            if src_path.exists() && dst_path.exists() {
+                let temp_dst = dst_path.with_extension("tmp_sl_bak");
+                if std::fs::rename(dst_path, &temp_dst).is_ok() {
+                    let symlink_result = {
+                        #[cfg(unix)]
+                        {
+                            std::os::unix::fs::symlink(src_path, dst_path)
+                        }
+                        #[cfg(windows)]
+                        {
+                            std::os::windows::fs::symlink_file(src_path, dst_path)
+                        }
+                        #[cfg(not(any(unix, windows)))]
+                        {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::Unsupported,
+                                "Symlinks not supported on this platform",
+                            ))
+                        }
+                    };
+
+                    if symlink_result.is_ok() {
+                        let _ = std::fs::remove_file(&temp_dst);
+                        successfully_linked.push(idx);
+                    } else {
+                        // Restore backup on failure
+                        let _ = std::fs::rename(&temp_dst, dst_path);
+                    }
+                }
+            }
+        }
+
+        if !successfully_linked.is_empty() {
+            drop(results_guard);
+            {
+                let mut results = self.deduplicator_results.write();
+                for group in &mut results.groups {
+                    let mut i = 0;
+                    while i < group.nodes.len() {
+                        if successfully_linked.contains(&group.nodes[i]) {
+                            group.nodes.remove(i);
+                            if i < group.file_ids.len() {
+                                group.file_ids.remove(i);
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                results.groups.retain(|group| group.nodes.len() >= 2);
+                results.rebuild_flat_rows(snapshot);
+            }
+
+            self.selected_duplicates
+                .retain(|idx| !successfully_linked.contains(idx));
+            self.remove_nodes_from_snapshot(&successfully_linked);
+
+            if self
+                .selected_node_idx
+                .is_some_and(|selected| successfully_linked.contains(&selected))
+            {
+                self.selected_node_idx = None;
+            }
+        }
+    }
+
     pub fn render_modals(&mut self, ctx: &egui::Context, snapshot: &FileArenaSnapshot) {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum DeletionAction {
@@ -295,6 +449,8 @@ impl GuiApp {
             TrashSingle(u32),
             DeleteDuplicates,
             TrashDuplicates,
+            HardlinkDuplicates,
+            SoftlinkDuplicates,
         }
 
         struct ModalConfig {
@@ -411,6 +567,66 @@ impl GuiApp {
                     })
                 }
             }
+            Some(ActiveModal::HardlinkDuplicates) => {
+                let idxs = &self.delete_duplicates_indices;
+                if idxs.is_empty() {
+                    None
+                } else {
+                    let total_size: u64 = idxs
+                        .iter()
+                        .map(|&idx| snapshot.nodes[idx as usize].size)
+                        .sum();
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(total_size)
+                        .to_string();
+                    let paths = idxs
+                        .iter()
+                        .map(|&idx| snapshot.get_full_path(idx))
+                        .collect();
+                    Some(ModalConfig {
+                        title: "🔗 REPLACE DUPLICATES WITH HARDLINKS",
+                        border_color: theme::BUTTON_ORANGE,
+                        warning_color: theme::BUTTON_ORANGE_HOVER,
+                        header: "🔗 Replace Duplicates with Hardlinks".to_string(),
+                        info_msg: format!("Total files to process: {}. Cumulative virtual size: {}", idxs.len(), size_str),
+                        warning_msg: "This will delete the selected duplicate files and replace them with filesystem-level hardlinks pointing to the remaining original file in each group. This retains files visually while freeing up actual physical storage.",
+                        checkbox_label: "I confirm that I want to replace selected files with hardlinks.",
+                        confirm_button_text: "🔗 Yes, Replace with Hardlinks",
+                        paths,
+                        action: DeletionAction::HardlinkDuplicates,
+                    })
+                }
+            }
+            Some(ActiveModal::SoftlinkDuplicates) => {
+                let idxs = &self.delete_duplicates_indices;
+                if idxs.is_empty() {
+                    None
+                } else {
+                    let total_size: u64 = idxs
+                        .iter()
+                        .map(|&idx| snapshot.nodes[idx as usize].size)
+                        .sum();
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(total_size)
+                        .to_string();
+                    let paths = idxs
+                        .iter()
+                        .map(|&idx| snapshot.get_full_path(idx))
+                        .collect();
+                    Some(ModalConfig {
+                        title: "🔗 REPLACE DUPLICATES WITH SOFTLINKS",
+                        border_color: theme::BUTTON_ORANGE,
+                        warning_color: theme::BUTTON_ORANGE_HOVER,
+                        header: "🔗 Replace Duplicates with Softlinks".to_string(),
+                        info_msg: format!("Total files to process: {}. Cumulative virtual size: {}", idxs.len(), size_str),
+                        warning_msg: "This will delete the selected duplicate files and replace them with filesystem-level softlinks (symbolic links) pointing to the remaining original file in each group. This retains files visually while freeing up actual physical storage.",
+                        checkbox_label: "I confirm that I want to replace selected files with softlinks.",
+                        confirm_button_text: "🔗 Yes, Replace with Softlinks",
+                        paths,
+                        action: DeletionAction::SoftlinkDuplicates,
+                    })
+                }
+            }
             _ => None,
         };
 
@@ -504,6 +720,20 @@ impl GuiApp {
                                             self.execute_deletion(
                                                 &self.delete_duplicates_indices.clone(),
                                                 true,
+                                                snapshot,
+                                            );
+                                            self.delete_duplicates_indices.clear();
+                                        }
+                                        DeletionAction::HardlinkDuplicates => {
+                                            self.execute_hardlinking(
+                                                &self.delete_duplicates_indices.clone(),
+                                                snapshot,
+                                            );
+                                            self.delete_duplicates_indices.clear();
+                                        }
+                                        DeletionAction::SoftlinkDuplicates => {
+                                            self.execute_softlinking(
+                                                &self.delete_duplicates_indices.clone(),
                                                 snapshot,
                                             );
                                             self.delete_duplicates_indices.clear();
@@ -674,5 +904,89 @@ impl GuiApp {
 
             state.is_scanning.store(false, Ordering::SeqCst);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::coordinator::{Coordinator, SharedState};
+    use crate::engine::traversal::TraversalEngine;
+
+    #[test]
+    fn test_execute_softlinking() -> Result<(), crate::EdirstatError> {
+        let temp_dir = std::env::current_dir()?
+            .join("target")
+            .join("test_gui_softlinking");
+        let _ = std::fs::remove_dir_all(&temp_dir); // Clean old
+        std::fs::create_dir_all(&temp_dir)?;
+
+        let file1_path = temp_dir.join("file1.txt");
+        let file2_path = temp_dir.join("file2.txt");
+
+        let content = b"hello identical softlink content! hello identical softlink content!";
+        std::fs::write(&file1_path, content)?;
+        std::fs::write(&file2_path, content)?;
+
+        let shared_state = Arc::new(SharedState::new());
+        let engine = Arc::new(TraversalEngine::new());
+        let (tx, rx) = crossbeam::channel::unbounded();
+
+        let handle = engine.start_traversal(temp_dir.clone(), tx)?;
+        let mut coordinator = Coordinator::new(rx, shared_state.clone());
+        coordinator.run_coordinator_loop(&temp_dir.to_string_lossy());
+        let _ = handle.join();
+
+        let snapshot = shared_state.current_snapshot.load();
+        assert!(!snapshot.nodes.is_empty());
+
+        let mut app = GuiApp::new(shared_state, engine);
+
+        // Scan duplicates using run_deduplication
+        let progress = atomic_progress::Progress::new_spinner("Deduplicator");
+        let config = crate::stats::deduplicator::DeduplicatorConfig {
+            min_size: 1,
+            ignore_system: false,
+            ignore_hidden: false,
+        };
+        crate::stats::deduplicator::run_deduplication(
+            snapshot.clone(),
+            progress,
+            app.deduplicator_results.clone(),
+            app.deduplicator_cancel.clone(),
+            config,
+        );
+
+        // Verify we found a duplicate group
+        assert_eq!(app.deduplicator_results.read().groups.len(), 1);
+        assert_eq!(app.deduplicator_results.read().groups[0].nodes.len(), 2);
+
+        // We want to replace the second file (node index 2 or 1, let's find the one that is not original/first)
+        let target_node_idx = {
+            let results_guard = app.deduplicator_results.read();
+            // The flat_rows sorted items: first is original, second is duplicate to be replaced.
+            assert_eq!(results_guard.flat_rows.len(), 2);
+            assert!(!results_guard.flat_rows[1].is_original);
+            results_guard.flat_rows[1].node_idx
+        };
+
+        // Execute softlinking
+        app.execute_softlinking(&[target_node_idx], &snapshot);
+
+        // Verify the softlink exists and points to the first file
+        let target_path = snapshot.get_full_path(target_node_idx);
+        let link_path = std::path::Path::new(&target_path);
+        assert!(link_path.exists());
+        assert!(link_path.is_symlink());
+
+        // Verify that the softlinked node has been removed from the results
+        assert!(app.deduplicator_results.read().groups.is_empty());
+        assert!(app.deduplicator_results.read().flat_rows.is_empty());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 }

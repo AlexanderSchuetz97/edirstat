@@ -509,6 +509,49 @@ impl super::GuiApp {
                 .format(total_selected_size)
                 .to_string();
 
+            ui.add_enabled_ui(has_selection, |ui| {
+                ui.scope(|ui| {
+                    ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
+                        crate::colors::BUTTON_ORANGE;
+                    ui.style_mut().visuals.widgets.hovered.weak_bg_fill =
+                        crate::colors::BUTTON_ORANGE_HOVER;
+                    ui.style_mut().visuals.widgets.active.weak_bg_fill =
+                        crate::colors::BUTTON_ORANGE;
+                    ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                    ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                    ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+
+                    let link_button_text = if has_selection {
+                        format!("🔗 Link... ({} files)", self.selected_duplicates.len())
+                    } else {
+                        "🔗 Link...".to_string()
+                    };
+
+                    let link_label = egui::RichText::new(link_button_text)
+                        .color(crate::colors::COLOR_WHITE)
+                        .strong();
+                    ui.menu_button(link_label, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+
+                        if ui.button("🔗 Replace Selected with Hardlinks").clicked() {
+                            self.delete_duplicates_indices =
+                                self.selected_duplicates.iter().copied().collect();
+                            self.delete_confirm_checked = false;
+                            self.active_modal = Some(crate::gui::ActiveModal::HardlinkDuplicates);
+                            ui.close_kind(egui::UiKind::Menu);
+                        }
+
+                        if ui.button("🔗 Replace Selected with Softlinks").clicked() {
+                            self.delete_duplicates_indices =
+                                self.selected_duplicates.iter().copied().collect();
+                            self.delete_confirm_checked = false;
+                            self.active_modal = Some(crate::gui::ActiveModal::SoftlinkDuplicates);
+                            ui.close_kind(egui::UiKind::Menu);
+                        }
+                    });
+                });
+            });
+
             // Combined drop-down menu button styled with deletion red hues
             ui.add_enabled_ui(has_selection, |ui| {
                 ui.scope(|ui| {

@@ -46,6 +46,10 @@ pub const EXT_NONE: Color32 = Color32::from_rgb(75, 85, 99); // Muted dark gray
 pub const BUTTON_BLUE: Color32 = Color32::from_rgb(59, 130, 246); // Toml blue / bright blue
 pub const BUTTON_BLUE_HOVER: Color32 = Color32::from_rgb(96, 165, 250); // Light blue for hover
 
+// Orange button styling (for hardlink button)
+pub const BUTTON_ORANGE: Color32 = Color32::from_rgb(217, 119, 6); // Amber-600
+pub const BUTTON_ORANGE_HOVER: Color32 = Color32::from_rgb(245, 158, 11); // Amber-500
+
 // General warnings & indicators
 pub const WARNING_RED: Color32 = Color32::from_rgb(239, 68, 68);
 pub const COLOR_WARNING_YELLOW: Color32 = Color32::YELLOW;
