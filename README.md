@@ -16,6 +16,8 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is built from
 
 ![eDirStat Main Interface - Directory Tree and Interactive Treemap](docs/screenshots/main_interface.jpg)
 
+![eDirStat Deduplicator - Deduplication File Scan](docs/screenshots/deduplicator.png)
+
 ![eDirStat Plots - File Size Distribution](docs/screenshots/file_size_distribution.jpg)
 
 ![eDirStat Plots - File Age vs File Size](docs/screenshots/file_age_vs_file_size.jpg)
@@ -26,11 +28,14 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is built from
 
 ![eDirStat Plots - Linked Temporal Timelines](docs/screenshots/linked_temporal_timelines.jpg)
 
+![eDirStat Plots - Duplicate Waste by Extension](docs/screenshots/duplicate_waste_by_extension.png)
+
 ---
 
 ## 🚀 Key Features
 
 - ⚡ **Work-Stealing Multi-threading:** Powered by a lock-free task injector queue for optimal utilization of all CPU cores during directory traversal.
+- 👥 **Multi-Stage Deduplication Engine:** Detects byte-for-byte identical files using an optimized 7-stage hashing pipeline with full hardlink awareness.
 - 📦 **Zero-Copy Serialization:** Uses binary snapshot layouts that can be instantly mapped into memory via `memmap2` and cast via `bytemuck`, bypassing traditional parsing overhead.
 - 📊 **Dynamic Treemap Visualization:** An interactive, responsive layout canvas that slices and dices data, using stable extension hashing for color-coded grouping.
 - 🔀 **Lazy Tree View:** Fluid interface navigation with automatic sibling-size sorting and recursive guidance lines.
@@ -81,7 +86,9 @@ Run the application from the command line:
    - **Clicking:** Click on a block to automatically select it in the directory tree on the left.
 4. **Inspect File Extensions:**
    The right panel displays a sorted list of file extensions detected during the scan, complete with color-coded markers.
-5. **Context Actions:**
+5. **Deduplicate Your Drive:**
+   Switch to the **👥 Deduplicator** tab to search for duplicate files on your scanned filesystem. Custom selection helpers allow you to automatically select duplicates while preserving the oldest, newest, or shortest-path file.
+6. **Context Actions:**
    Right-click any item in the left-hand explorer to open a context menu.
    - **Open in File Manager:** Launches your operating system's default file browser (Explorer, Finder, or Files) at the selected path.
    - **Delete (Permanent):** Opens a safety dialog to permanently delete the target path from your disk.
@@ -151,6 +158,20 @@ The `.edst` snapshot file layout matches the structure of the in-memory arena:
 
 - **Memory-Mapped Loading:** Loading a snapshot uses copy-on-write virtual memory maps (`memmap2`).
 - **Zero Parsing Overhead:** Because `FileNode` is a POD structure, the loaded byte buffer is safely cast directly to a slice of `&[FileNode]`. This yields instant loading, even for files tracking millions of objects.
+
+### 5. Multi-Stage Deduplication Engine (`src/stats/deduplicator.rs`)
+
+The deduplication module detects byte-for-byte identical files with minimal disk I/O. Candidate duplicate groups are identified and isolated through a 7-stage pipeline:
+
+1. **Size Partitioning:** Scanned files are grouped by identical byte counts. Singleton sizes are discarded immediately.
+2. **Prefix Hashing:** Worker threads read and hash the first 4KB of files to filter out non-matching formats.
+3. **Midpoint Hashing:** Computes a hash around the center of the remaining files to detect differences inside similar files.
+4. **Suffix Hashing:** Hashes the last 4KB of file data, which often contains unique trailing metadata.
+5. **Multi-Range Hashing:** Performs periodic block sampling (every 100MB) across large files to ensure long-distance uniformity without scanning entire gigabyte-scale structures.
+6. **Full Cryptographic Hashing:** Executes a full BLAKE3 cryptographic hash only over candidates that successfully cleared the previous five stages.
+7. **Real-time Validation:** Performs timestamp checking on disk immediately before grouping and action triggers to protect you against modifying files changed since snapshot generation.
+
+The engine remains hardlink-aware, allowing it to accurately differentiate between physical duplicate copies and single-inode hardlinks, which consume no additional storage.
 
 ---
 
