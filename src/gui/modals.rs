@@ -66,54 +66,30 @@ fn walk_dir(
         let Ok(entry) = entry_res else {
             continue;
         };
-        let path = entry.path();
-        let Ok(metadata) = entry.metadata() else {
+        let Some(meta) = crate::arena::EntryMetadata::from_dir_entry(&entry) else {
             continue;
         };
 
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_symlink = metadata.is_symlink();
-        let modified_timestamp = metadata.modified().map_or(0, |t| {
-            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64)
-        });
-        let created_timestamp = metadata.created().map_or(0, |t| {
-            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64)
-        });
-        let accessed_timestamp = metadata.accessed().map_or(0, |t| {
-            t.duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64)
-        });
-
-        let name_id = string_pool.get_or_insert(name.as_bytes());
+        let name_id = string_pool.get_or_insert(meta.name.as_bytes());
         let child_idx = cloned_nodes.len() as u32;
 
-        if metadata.is_dir() {
-            let dir_node = crate::arena::FileNode::new(
-                name_id,
-                Some(parent_idx),
-                true,
-                false,
-                modified_timestamp,
-                created_timestamp,
-                accessed_timestamp,
-            );
-            cloned_nodes.push(dir_node);
-            last_child_map.push(crate::arena::NO_INDEX);
+        let node = crate::arena::FileNode::from_metadata(name_id, Some(parent_idx), &meta);
+        cloned_nodes.push(node);
+        last_child_map.push(crate::arena::NO_INDEX);
 
-            // Connect to parent sibling chain
-            let p_idx = parent_idx as usize;
-            let last_child = last_child_map[p_idx];
-            if last_child == crate::arena::NO_INDEX {
-                cloned_nodes[p_idx].first_child = child_idx;
-            } else {
-                cloned_nodes[last_child as usize].next_sibling = child_idx;
-            }
-            last_child_map[p_idx] = child_idx;
+        // Connect to parent sibling chain
+        let p_idx = parent_idx as usize;
+        let last_child = last_child_map[p_idx];
+        if last_child == crate::arena::NO_INDEX {
+            cloned_nodes[p_idx].first_child = child_idx;
+        } else {
+            cloned_nodes[last_child as usize].next_sibling = child_idx;
+        }
+        last_child_map[p_idx] = child_idx;
 
+        if meta.is_dir {
             walk_dir(
-                &path,
+                &entry.path(),
                 child_idx,
                 cloned_nodes,
                 string_pool,
@@ -122,39 +98,15 @@ fn walk_dir(
                 dir_idx,
             );
         } else {
-            let size = metadata.len();
-            let mut file_node = crate::arena::FileNode::new(
-                name_id,
-                Some(parent_idx),
-                false,
-                is_symlink,
-                modified_timestamp,
-                created_timestamp,
-                accessed_timestamp,
-            );
-            file_node.size = size;
-            cloned_nodes.push(file_node);
-            last_child_map.push(crate::arena::NO_INDEX);
-
-            // Connect to parent sibling chain
-            let p_idx = parent_idx as usize;
-            let last_child = last_child_map[p_idx];
-            if last_child == crate::arena::NO_INDEX {
-                cloned_nodes[p_idx].first_child = child_idx;
-            } else {
-                cloned_nodes[last_child as usize].next_sibling = child_idx;
-            }
-            last_child_map[p_idx] = child_idx;
-
             traversal_stats.files_scanned.fetch_add(1, Ordering::SeqCst);
             traversal_stats
                 .bytes_scanned
-                .fetch_add(size as usize, Ordering::SeqCst);
+                .fetch_add(meta.len as usize, Ordering::SeqCst);
 
             // Propagate size and count upwards through parent indices up to dir_idx
             let mut current_idx = Some(parent_idx);
             while let Some(idx) = current_idx {
-                cloned_nodes[idx as usize].size += size;
+                cloned_nodes[idx as usize].size += meta.len;
                 cloned_nodes[idx as usize].file_count += 1;
                 if idx == dir_idx {
                     break;
@@ -274,383 +226,242 @@ impl GuiApp {
             .store(std::sync::Arc::new(new_snapshot));
     }
 
+    pub(crate) fn execute_deletion(
+        &mut self,
+        target_indices: &[u32],
+        to_trash: bool,
+        snapshot: &FileArenaSnapshot,
+    ) {
+        let mut successfully_deleted = Vec::new();
+        for &idx in target_indices {
+            let path_str = snapshot.get_full_path(idx);
+            let path = std::path::Path::new(&path_str);
+            if path.exists() {
+                let result = if to_trash {
+                    trash::delete(path).map_err(|e| e.to_string())
+                } else if path.is_dir() {
+                    std::fs::remove_dir_all(path).map_err(|e| e.to_string())
+                } else {
+                    std::fs::remove_file(path).map_err(|e| e.to_string())
+                };
+
+                if let Err(e) = result {
+                    println!("Failed to delete/trash path {}: {}", path.display(), e);
+                } else {
+                    successfully_deleted.push(idx);
+                }
+            } else {
+                successfully_deleted.push(idx);
+            }
+        }
+
+        if !successfully_deleted.is_empty() {
+            {
+                let mut results = self.deduplicator_results.write();
+                for group in &mut results.groups {
+                    let mut i = 0;
+                    while i < group.nodes.len() {
+                        if successfully_deleted.contains(&group.nodes[i]) {
+                            group.nodes.remove(i);
+                            if i < group.file_ids.len() {
+                                group.file_ids.remove(i);
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                results.groups.retain(|group| group.nodes.len() >= 2);
+                results.rebuild_flat_rows(snapshot);
+            }
+
+            self.selected_duplicates
+                .retain(|idx| !successfully_deleted.contains(idx));
+            self.remove_nodes_from_snapshot(&successfully_deleted);
+
+            if self.selected_node_idx.is_some_and(|selected| successfully_deleted.contains(&selected)) {
+                self.selected_node_idx = None;
+            }
+        }
+    }
+
     pub fn render_modals(&mut self, ctx: &egui::Context, snapshot: &FileArenaSnapshot) {
-        // Render Permanent Deletion Modal Popup
-        if self.active_modal == Some(ActiveModal::Delete) {
-            let idx_opt = self.delete_node_idx;
-            if let Some(idx) = idx_opt {
-                let path_str = snapshot.get_full_path(idx);
-                let size_str = prettier_bytes::ByteFormatter::new()
-                    .format(snapshot.nodes[idx as usize].size)
-                    .to_string();
-
-                let mut open = true;
-                egui::Window::new("⚠ PERMANENT DELETION WARNING")
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .collapsible(false)
-                    .resizable(false)
-                    .open(&mut open)
-                    .frame(
-                        egui::Frame::window(&ctx.global_style())
-                            .stroke(egui::Stroke::new(2.0, theme::DELETION_BORDER))
-                    ) // Thick red border outline
-                    .show(ctx, |ui| {
-                        ui.vertical(|ui| {
-                            let path = std::path::Path::new(&path_str);
-                            if path.exists() {
-                                ui.heading(
-                                    egui::RichText::new("⚠ Permanent Deletion Warning!")
-                                        .color(theme::DELETION_WARNING)
-                                        .strong()
-                                );
-                                ui.separator();
-
-                                ui.label("You are about to permanently delete the following path:");
-                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
-                                ui.label(format!("Total Size: {size_str}"));
-                                ui.separator();
-
-                                ui.label("This is a recursive deletion. All files, folders, and subdirectories under this path will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).");
-                                ui.add_space(8.0);
-
-                                ui.checkbox(&mut self.delete_confirm_checked, "I understand that files will be permanently deleted and cannot be recovered.");
-                                ui.add_space(8.0);
-
-                                ui.horizontal(|ui| {
-                                    if ui.button("Cancel").clicked() {
-                                        self.active_modal = None;
-                                    }
-
-                                    // Red confirm button
-                                    let confirm_btn = egui::Button::new(
-                                        egui::RichText::new("🗑 Yes, Delete Permanently")
-                                            .color(egui::Color32::WHITE)
-                                            .strong()
-                                    ).fill(theme::DELETION_BORDER);
-
-                                    let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
-                                    if confirm_res.clicked() {
-                                        let path = std::path::Path::new(&path_str);
-                                        if path.exists() {
-                                            let delete_result = if path.is_dir() {
-                                                std::fs::remove_dir_all(path)
-                                            } else {
-                                                std::fs::remove_file(path)
-                                            };
-
-                                            if let Err(e) = delete_result {
-                                                println!("Failed to delete path: {e}");
-                                            } else {
-                                                // Dynamic backpropagation updates the tree before dropping active choice
-                                                self.remove_nodes_from_snapshot(&[idx]);
-                                                self.selected_node_idx = None;
-                                            }
-                                        }
-                                        self.active_modal = None;
-                                    }
-                                });
-                            } else {
-                                ui.heading(
-                                    egui::RichText::new("❌ Path Does Not Exist!")
-                                        .color(theme::DELETION_WARNING)
-                                        .strong()
-                                );
-                                ui.separator();
-                                ui.label("Error: The path you are trying to delete does not exist on disk.");
-                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
-                                ui.add_space(8.0);
-                                if ui.button("Close").clicked() {
-                                    self.active_modal = None;
-                                }
-                            }
-                        });
-                    });
-                if !open {
-                    self.active_modal = None;
-                }
-            }
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum DeletionAction {
+            DeleteSingle(u32),
+            TrashSingle(u32),
+            DeleteDuplicates,
+            TrashDuplicates,
         }
 
-        // Render Move to Trash Modal Popup
-        if self.active_modal == Some(ActiveModal::Trash) {
-            let idx_opt = self.delete_node_idx;
-            if let Some(idx) = idx_opt {
-                let path_str = snapshot.get_full_path(idx);
-                let size_str = prettier_bytes::ByteFormatter::new()
-                    .format(snapshot.nodes[idx as usize].size)
-                    .to_string();
-
-                let mut open = true;
-                egui::Window::new("♻ MOVE TO TRASH")
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .collapsible(false)
-                    .resizable(false)
-                    .open(&mut open)
-                    .frame(
-                        egui::Frame::window(&ctx.global_style())
-                            .stroke(egui::Stroke::new(2.0, theme::TRASH_BORDER))
-                    ) // Thick blue border outline
-                    .show(ctx, |ui| {
-                        ui.vertical(|ui| {
-                            let path = std::path::Path::new(&path_str);
-                            if path.exists() {
-                                ui.heading(
-                                    egui::RichText::new("♻ Move to Trash")
-                                        .color(theme::TRASH_WARNING)
-                                        .strong()
-                                );
-                                ui.separator();
-
-                                ui.label("You are about to move the following path to the trash:");
-                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
-                                ui.label(format!("Total Size: {size_str}"));
-                                ui.separator();
-
-                                ui.label("This will move the selected path and all its contents to your system recycle bin/trash, where it can be recovered or permanently deleted later.");
-                                ui.add_space(8.0);
-
-                                ui.checkbox(&mut self.delete_confirm_checked, "I confirm that I want to move this to the trash.");
-                                ui.add_space(8.0);
-
-                                ui.horizontal(|ui| {
-                                    if ui.button("Cancel").clicked() {
-                                        self.active_modal = None;
-                                    }
-
-                                    // Blue confirm button
-                                    let confirm_btn = egui::Button::new(
-                                        egui::RichText::new("♻ Yes, Move to Trash")
-                                            .color(egui::Color32::WHITE)
-                                            .strong()
-                                    ).fill(theme::TRASH_BORDER);
-
-                                    let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
-                                    if confirm_res.clicked() {
-                                        let path = std::path::Path::new(&path_str);
-                                        if path.exists() {
-                                            let trash_result = trash::delete(path);
-
-                                            if let Err(e) = trash_result {
-                                                println!("Failed to move path to trash: {e}");
-                                            } else {
-                                                // Dynamic backpropagation updates the tree before dropping active choice
-                                                self.remove_nodes_from_snapshot(&[idx]);
-                                                self.selected_node_idx = None;
-                                            }
-                                        }
-                                        self.active_modal = None;
-                                    }
-                                });
-                            } else {
-                                ui.heading(
-                                    egui::RichText::new("❌ Path Does Not Exist!")
-                                        .color(theme::DELETION_WARNING)
-                                        .strong()
-                                );
-                                ui.separator();
-                                ui.label("Error: The path you are trying to trash does not exist on disk.");
-                                ui.colored_label(ui.visuals().strong_text_color(), &path_str);
-                                ui.add_space(8.0);
-                                if ui.button("Close").clicked() {
-                                    self.active_modal = None;
-                                }
-                            }
-                        });
-                    });
-                if !open {
-                    self.active_modal = None;
-                }
-            }
+        struct ModalConfig {
+            title: &'static str,
+            border_color: egui::Color32,
+            warning_color: egui::Color32,
+            header: String,
+            info_msg: String,
+            warning_msg: &'static str,
+            checkbox_label: &'static str,
+            confirm_button_text: &'static str,
+            paths: Vec<String>,
+            action: DeletionAction,
         }
 
-        // Render Permanent Deduplication Modal Popup
-        if self.active_modal == Some(ActiveModal::DeleteDuplicates) {
-            let idxs = self.delete_duplicates_indices.clone();
-            if idxs.is_empty() {
-                self.active_modal = None;
-            } else {
-                let count = idxs.len();
-                let total_size: u64 = idxs
-                    .iter()
-                    .map(|&idx| snapshot.nodes[idx as usize].size)
-                    .sum();
-                let size_str = prettier_bytes::ByteFormatter::new()
-                    .format(total_size)
-                    .to_string();
+        let modal_config = match self.active_modal {
+            Some(ActiveModal::Delete) => {
+                self.delete_node_idx.map(|idx| {
+                    let path_str = snapshot.get_full_path(idx);
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(snapshot.nodes[idx as usize].size)
+                        .to_string();
+                    ModalConfig {
+                        title: "⚠ PERMANENT DELETION WARNING",
+                        border_color: theme::DELETION_BORDER,
+                        warning_color: theme::DELETION_WARNING,
+                        header: "⚠ Permanent Deletion Warning!".to_string(),
+                        info_msg: format!("Total Size: {size_str}"),
+                        warning_msg: "This is a recursive deletion. All files, folders, and subdirectories under this path will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).",
+                        checkbox_label: "I understand that files will be permanently deleted and cannot be recovered.",
+                        confirm_button_text: "🗑 Yes, Delete Permanently",
+                        paths: vec![path_str],
+                        action: DeletionAction::DeleteSingle(idx),
+                    }
+                })
+            }
+            Some(ActiveModal::Trash) => {
+                self.delete_node_idx.map(|idx| {
+                    let path_str = snapshot.get_full_path(idx);
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(snapshot.nodes[idx as usize].size)
+                        .to_string();
+                    ModalConfig {
+                        title: "♻ MOVE TO TRASH",
+                        border_color: theme::TRASH_BORDER,
+                        warning_color: theme::TRASH_WARNING,
+                        header: "♻ Move to Trash".to_string(),
+                        info_msg: format!("Total Size: {size_str}"),
+                        warning_msg: "This will move the selected path and all its contents to your system recycle bin/trash, where it can be recovered or permanently deleted later.",
+                        checkbox_label: "I confirm that I want to move this to the trash.",
+                        confirm_button_text: "♻ Yes, Move to Trash",
+                        paths: vec![path_str],
+                        action: DeletionAction::TrashSingle(idx),
+                    }
+                })
+            }
+            Some(ActiveModal::DeleteDuplicates) => {
+                let idxs = &self.delete_duplicates_indices;
+                if idxs.is_empty() {
+                    None
+                } else {
+                    let total_size: u64 = idxs
+                        .iter()
+                        .map(|&idx| snapshot.nodes[idx as usize].size)
+                        .sum();
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(total_size)
+                        .to_string();
+                    let paths = idxs
+                        .iter()
+                        .map(|&idx| snapshot.get_full_path(idx))
+                        .collect();
+                    Some(ModalConfig {
+                        title: "⚠ PERMANENT DEDUPLICATION WARNING",
+                        border_color: theme::DELETION_BORDER,
+                        warning_color: theme::DELETION_WARNING,
+                        header: "⚠ Permanent Duplicate Deletion Warning!".to_string(),
+                        info_msg: format!("Total space to be reclaimed: {size_str}"),
+                        warning_msg: "All selected files will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).",
+                        checkbox_label: "I understand that files will be permanently deleted and cannot be recovered.",
+                        confirm_button_text: "🗑 Yes, Delete Selected Permanently",
+                        paths,
+                        action: DeletionAction::DeleteDuplicates,
+                    })
+                }
+            }
+            Some(ActiveModal::TrashDuplicates) => {
+                let idxs = &self.delete_duplicates_indices;
+                if idxs.is_empty() {
+                    None
+                } else {
+                    let total_size: u64 = idxs
+                        .iter()
+                        .map(|&idx| snapshot.nodes[idx as usize].size)
+                        .sum();
+                    let size_str = prettier_bytes::ByteFormatter::new()
+                        .format(total_size)
+                        .to_string();
+                    let paths = idxs
+                        .iter()
+                        .map(|&idx| snapshot.get_full_path(idx))
+                        .collect();
+                    Some(ModalConfig {
+                        title: "♻ MOVE DUPLICATES TO TRASH",
+                        border_color: theme::TRASH_BORDER,
+                        warning_color: theme::TRASH_WARNING,
+                        header: "♻ Move Duplicates to Trash".to_string(),
+                        info_msg: format!("Total space to be reclaimed: {size_str}"),
+                        warning_msg: "All selected files will be moved to the recycle bin/trash.",
+                        checkbox_label: "I confirm that I want to move these files to the trash.",
+                        confirm_button_text: "♻ Yes, Move Selected to Trash",
+                        paths,
+                        action: DeletionAction::TrashDuplicates,
+                    })
+                }
+            }
+            _ => None,
+        };
 
-                let mut open = true;
-                egui::Window::new("⚠ PERMANENT DEDUPLICATION WARNING")
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .collapsible(false)
-                    .resizable(true)
-                    .default_width(500.0)
-                    .open(&mut open)
-                    .frame(
-                        egui::Frame::window(&ctx.global_style())
-                            .stroke(egui::Stroke::new(2.0, theme::DELETION_BORDER))
-                    ) // Thick red border outline
-                    .show(ctx, |ui| {
-                        ui.vertical(|ui| {
+        if let Some(cfg) = modal_config {
+            let mut open = true;
+            egui::Window::new(cfg.title)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(!cfg.paths.is_empty())
+                .default_width(500.0)
+                .open(&mut open)
+                .frame(
+                    egui::Frame::window(&ctx.global_style())
+                        .stroke(egui::Stroke::new(2.0, cfg.border_color)),
+                )
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        let path_exists = if cfg.paths.len() == 1 {
+                            std::path::Path::new(&cfg.paths[0]).exists()
+                        } else {
+                            true
+                        };
+
+                        if path_exists {
                             ui.heading(
-                                egui::RichText::new("⚠ Permanent Duplicate Deletion Warning!")
-                                    .color(theme::DELETION_WARNING)
-                                    .strong()
-                            );
-                            ui.separator();
-
-                            ui.label(format!("You are about to permanently delete {count} duplicate files:"));
-                            ui.colored_label(ui.visuals().strong_text_color(), format!("Total space to be reclaimed: {size_str}"));
-                            ui.separator();
-
-                            ui.label("Files to be deleted:");
-                            egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                                for &idx in &idxs {
-                                    let path_str = snapshot.get_full_path(idx);
-                                    ui.small(&path_str);
-                                }
-                            });
-                            ui.separator();
-
-                            ui.label("All selected files will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).");
-                            ui.add_space(8.0);
-
-                            ui.checkbox(&mut self.delete_confirm_checked, "I understand that files will be permanently deleted and cannot be recovered.");
-                            ui.add_space(8.0);
-
-                            ui.horizontal(|ui| {
-                                if ui.button("Cancel").clicked() {
-                                    self.active_modal = None;
-                                }
-
-                                // Red confirm button
-                                let confirm_btn = egui::Button::new(
-                                    egui::RichText::new("🗑 Yes, Delete Selected Permanently")
-                                        .color(egui::Color32::WHITE)
-                                        .strong()
-                                ).fill(theme::DELETION_BORDER);
-
-                                    let confirm_res = ui.add_enabled(self.delete_confirm_checked, confirm_btn);
-                                    if confirm_res.clicked() {
-                                        let mut successfully_deleted = Vec::new();
-                                        for &idx in &self.delete_duplicates_indices {
-                                            let path_str = snapshot.get_full_path(idx);
-                                            let path = std::path::Path::new(&path_str);
-                                            if path.exists() {
-                                                let delete_result = if path.is_dir() {
-                                                    std::fs::remove_dir_all(path)
-                                                } else {
-                                                    std::fs::remove_file(path)
-                                                };
-
-                                                if let Err(e) = delete_result {
-                                                    println!("Failed to delete path: {e}");
-                                                } else {
-                                                    successfully_deleted.push(idx);
-                                                }
-                                            } else {
-                                                successfully_deleted.push(idx);
-                                            }
-                                        }
-
-                                        // Prune the deleted files from the deduplicator in-memory results list
-                                        {
-                                            let mut results = self.deduplicator_results.write();
-                                            for group in results.iter_mut() {
-                                                let mut i = 0;
-                                                while i < group.nodes.len() {
-                                                    if successfully_deleted.contains(&group.nodes[i]) {
-                                                        group.nodes.remove(i);
-                                                        if i < group.file_ids.len() {
-                                                            group.file_ids.remove(i);
-                                                        }
-                                                    } else {
-                                                        i += 1;
-                                                    }
-                                                }
-                                            }
-                                            results.retain(|group| group.nodes.len() >= 2);
-                                        }
-
-                                        // Clear selection and close modal
-                                        self.selected_duplicates.retain(|idx| !successfully_deleted.contains(idx));
-
-                                        // Execute structural adjustments over the cloned tree all at once
-                                        self.remove_nodes_from_snapshot(&successfully_deleted);
-
-                                        self.delete_duplicates_indices.clear();
-                                        self.active_modal = None;
-                                    }
-                            });
-                        });
-                    });
-                if !open {
-                    self.active_modal = None;
-                }
-            }
-        }
-
-        // Render Move to Trash Deduplication Modal Popup
-        if self.active_modal == Some(ActiveModal::TrashDuplicates) {
-            let idxs = self.delete_duplicates_indices.clone();
-            if idxs.is_empty() {
-                self.active_modal = None;
-            } else {
-                let count = idxs.len();
-                let total_size: u64 = idxs
-                    .iter()
-                    .map(|&idx| snapshot.nodes[idx as usize].size)
-                    .sum();
-                let size_str = prettier_bytes::ByteFormatter::new()
-                    .format(total_size)
-                    .to_string();
-
-                let mut open = true;
-                egui::Window::new("♻ MOVE DUPLICATES TO TRASH")
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .collapsible(false)
-                    .resizable(true)
-                    .default_width(500.0)
-                    .open(&mut open)
-                    .frame(
-                        egui::Frame::window(&ctx.global_style())
-                            .stroke(egui::Stroke::new(2.0, theme::TRASH_BORDER)),
-                    ) // Thick blue border outline
-                    .show(ctx, |ui| {
-                        ui.vertical(|ui| {
-                            ui.heading(
-                                egui::RichText::new("♻ Move Duplicates to Trash")
-                                    .color(theme::TRASH_WARNING)
+                                egui::RichText::new(&cfg.header)
+                                    .color(cfg.warning_color)
                                     .strong(),
                             );
                             ui.separator();
 
-                            ui.label(format!(
-                                "You are about to move {count} duplicate files to the trash:"
-                            ));
-                            ui.colored_label(
-                                ui.visuals().strong_text_color(),
-                                format!("Total space to be reclaimed: {size_str}"),
-                            );
+                            ui.label(if cfg.paths.len() > 1 {
+                                format!("You are about to delete/trash {} duplicate files:", cfg.paths.len())
+                            } else {
+                                "You are about to delete/trash the following path:".to_string()
+                            });
+
+                            ui.colored_label(ui.visuals().strong_text_color(), &cfg.paths[0]);
+                            if cfg.paths.len() > 1 {
+                                egui::ScrollArea::vertical()
+                                    .max_height(200.0)
+                                    .show(ui, |ui| {
+                                        for path in &cfg.paths[1..] {
+                                            ui.small(path);
+                                        }
+                                    });
+                            }
+                            ui.label(&cfg.info_msg);
                             ui.separator();
 
-                            ui.label("Files to be moved:");
-                            egui::ScrollArea::vertical()
-                                .max_height(200.0)
-                                .show(ui, |ui| {
-                                    for &idx in &idxs {
-                                        let path_str = snapshot.get_full_path(idx);
-                                        ui.small(&path_str);
-                                    }
-                                });
-                            ui.separator();
-
-                            ui.label("All selected files will be moved to the recycle bin/trash.");
+                            ui.label(cfg.warning_msg);
                             ui.add_space(8.0);
 
-                            ui.checkbox(
-                                &mut self.delete_confirm_checked,
-                                "I confirm that I want to move these files to the trash.",
-                            );
+                            ui.checkbox(&mut self.delete_confirm_checked, cfg.checkbox_label);
                             ui.add_space(8.0);
 
                             ui.horizontal(|ui| {
@@ -658,69 +469,63 @@ impl GuiApp {
                                     self.active_modal = None;
                                 }
 
-                                // Blue confirm button
                                 let confirm_btn = egui::Button::new(
-                                    egui::RichText::new("♻ Yes, Move Selected to Trash")
+                                    egui::RichText::new(cfg.confirm_button_text)
                                         .color(egui::Color32::WHITE)
                                         .strong(),
                                 )
-                                .fill(theme::TRASH_BORDER);
+                                .fill(cfg.border_color);
 
                                 let confirm_res =
                                     ui.add_enabled(self.delete_confirm_checked, confirm_btn);
                                 if confirm_res.clicked() {
-                                    let mut successfully_deleted = Vec::new();
-                                    for &idx in &self.delete_duplicates_indices {
-                                        let path_str = snapshot.get_full_path(idx);
-                                        let path = std::path::Path::new(&path_str);
-                                        if path.exists() {
-                                            let trash_result = trash::delete(path);
-
-                                            if let Err(e) = trash_result {
-                                                println!("Failed to move path to trash: {e}");
-                                            } else {
-                                                successfully_deleted.push(idx);
-                                            }
-                                        } else {
-                                            successfully_deleted.push(idx);
+                                    match cfg.action {
+                                        DeletionAction::DeleteSingle(idx) => {
+                                            self.execute_deletion(&[idx], false, snapshot);
+                                        }
+                                        DeletionAction::TrashSingle(idx) => {
+                                            self.execute_deletion(&[idx], true, snapshot);
+                                        }
+                                        DeletionAction::DeleteDuplicates => {
+                                            self.execute_deletion(
+                                                &self.delete_duplicates_indices.clone(),
+                                                false,
+                                                snapshot,
+                                            );
+                                            self.delete_duplicates_indices.clear();
+                                        }
+                                        DeletionAction::TrashDuplicates => {
+                                            self.execute_deletion(
+                                                &self.delete_duplicates_indices.clone(),
+                                                true,
+                                                snapshot,
+                                            );
+                                            self.delete_duplicates_indices.clear();
                                         }
                                     }
-
-                                    // Prune the deleted files from the deduplicator in-memory results list
-                                    {
-                                        let mut results = self.deduplicator_results.write();
-                                        for group in results.iter_mut() {
-                                            let mut i = 0;
-                                            while i < group.nodes.len() {
-                                                if successfully_deleted.contains(&group.nodes[i]) {
-                                                    group.nodes.remove(i);
-                                                    if i < group.file_ids.len() {
-                                                        group.file_ids.remove(i);
-                                                    }
-                                                } else {
-                                                    i += 1;
-                                                }
-                                            }
-                                        }
-                                        results.retain(|group| group.nodes.len() >= 2);
-                                    }
-
-                                    // Clear selection and close modal
-                                    self.selected_duplicates
-                                        .retain(|idx| !successfully_deleted.contains(idx));
-
-                                    // Execute structural adjustments over the cloned tree all at once
-                                    self.remove_nodes_from_snapshot(&successfully_deleted);
-
-                                    self.delete_duplicates_indices.clear();
                                     self.active_modal = None;
                                 }
                             });
-                        });
+                        } else {
+                            ui.heading(
+                                egui::RichText::new("❌ Path Does Not Exist!")
+                                    .color(theme::DELETION_WARNING)
+                                    .strong(),
+                            );
+                            ui.separator();
+                            ui.label(
+                                "Error: The path you are trying to delete does not exist on disk.",
+                            );
+                            ui.colored_label(ui.visuals().strong_text_color(), &cfg.paths[0]);
+                            ui.add_space(8.0);
+                            if ui.button("Close").clicked() {
+                                self.active_modal = None;
+                            }
+                        }
                     });
-                if !open {
-                    self.active_modal = None;
-                }
+                });
+            if !open {
+                self.active_modal = None;
             }
         }
 

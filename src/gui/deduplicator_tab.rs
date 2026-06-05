@@ -9,66 +9,7 @@ use egui_extras::{Column, TableBuilder};
 use crate::arena::FileArenaSnapshot;
 use crate::stats::deduplicator::run_deduplication;
 
-/// Flat representation of a duplicate candidate for lazy table rendering
-#[derive(Clone, Debug)]
-pub struct DuplicateRow {
-    pub node_idx: u32,
-    pub group_idx: usize,
-    pub filename: String,
-    pub parent_path: String,
-    pub size: u64,
-    pub size_str: String,
-    pub reclaimable_str: String,
-    pub created_time_str: String,
-    pub modified_time_str: String,
-    pub is_original: bool,
-    pub is_hardlink: bool,
-}
 
-/// Format epoch timestamp into YYYY-MM-DD HH:MM:SS format
-fn format_timestamp(epoch_secs: i64) -> String {
-    if epoch_secs <= 0 {
-        return "Unknown".to_string();
-    }
-    let days = epoch_secs / 86400;
-    let secs_in_day = epoch_secs % 86400;
-
-    let mut year = 1970;
-    let mut days_left = days;
-
-    loop {
-        let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-        let days_in_year = if is_leap { 366 } else { 365 };
-        if days_left < days_in_year {
-            break;
-        }
-        days_left -= days_in_year;
-        year += 1;
-    }
-
-    let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-    let month_days = if is_leap {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-
-    let mut month = 1;
-    let mut day = days_left + 1;
-    for &days_in_m in &month_days {
-        if day <= days_in_m {
-            break;
-        }
-        day -= days_in_m;
-        month += 1;
-    }
-
-    let hour = secs_in_day / 3600;
-    let minute = (secs_in_day % 3600) / 60;
-    let second = secs_in_day % 60;
-
-    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
-}
 
 impl super::GuiApp {
     pub(crate) fn render_deduplicator_tab(
@@ -85,7 +26,7 @@ impl super::GuiApp {
         }
 
         // Determine if any duplicate group is fully selected (meaning the original and all copies are selected)
-        let active_groups = self.deduplicator_results.read().clone();
+        let active_groups = self.deduplicator_results.read().groups.clone();
         let mut fully_selected_groups_info = Vec::new();
         for group in &active_groups {
             let all_selected = group
@@ -288,7 +229,7 @@ impl super::GuiApp {
                     .with_start_time_now()
                     .build();
 
-                    *self.deduplicator_results.write() = Vec::new();
+                    *self.deduplicator_results.write() = crate::stats::deduplicator::DeduplicationResults::default();
 
                     let progress_clone = self.deduplicator_progress.clone();
                     let results_clone = self.deduplicator_results.clone();
@@ -324,142 +265,18 @@ impl super::GuiApp {
         }
     }
 
-    fn check_rebuild_flat_rows(
-        &mut self,
-        snapshot: &FileArenaSnapshot,
-        active_groups: &[crate::stats::deduplicator::DuplicateGroup],
-    ) {
-        let current_total_files: usize = active_groups.iter().map(|g| g.nodes.len()).sum();
-        let current_sig = (active_groups.len(), current_total_files);
 
-        let mut flat_rows = Vec::with_capacity(current_total_files);
-        for (g_idx, group) in active_groups.iter().enumerate() {
-            // Pair each node with its file ID
-            let mut paired: Vec<(u32, (u64, u64))> = group
-                .nodes
-                .iter()
-                .copied()
-                .zip(group.file_ids.iter().copied())
-                .collect();
-            if paired.len() < group.nodes.len() {
-                paired = group
-                    .nodes
-                    .iter()
-                    .copied()
-                    .map(|idx| (idx, (0, 0)))
-                    .collect();
-            }
-
-            // Sort chronologically (oldest modified first), using shorter filename length as a tie-breaker
-            paired.sort_by(|a, b| {
-                let node_a = &snapshot.nodes[a.0 as usize];
-                let node_b = &snapshot.nodes[b.0 as usize];
-
-                let mod_cmp = node_a.modified_timestamp.cmp(&node_b.modified_timestamp);
-                if mod_cmp != std::cmp::Ordering::Equal {
-                    return mod_cmp;
-                }
-
-                let cre_cmp = node_a.created_timestamp.cmp(&node_b.created_timestamp);
-                if cre_cmp != std::cmp::Ordering::Equal {
-                    return cre_cmp;
-                }
-
-                let name_a = snapshot.string_pool.get(node_a.name_id).unwrap_or("");
-                let name_b = snapshot.string_pool.get(node_b.name_id).unwrap_or("");
-                name_a.len().cmp(&name_b.len())
-            });
-
-            // Calculate total reclaimable space for the group based on unique inodes
-            let unique_inodes_count = {
-                let mut ids: Vec<(u64, u64)> = paired
-                    .iter()
-                    .map(|p| p.1)
-                    .filter(|&id| id != (0, 0))
-                    .collect();
-                ids.sort_unstable();
-                ids.dedup();
-                ids.len()
-            };
-            let total_reclaimable = if unique_inodes_count > 0 {
-                group.size * (unique_inodes_count as u64 - 1)
-            } else {
-                group.size * (paired.len().saturating_sub(1) as u64)
-            };
-
-            for (f_idx, &(node_idx, file_id)) in paired.iter().enumerate() {
-                let full_path = snapshot.get_full_path(node_idx);
-                let path = std::path::Path::new(&full_path);
-
-                let filename = path
-                    .file_name()
-                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-
-                let parent_path = path
-                    .parent()
-                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-
-                let node = &snapshot.nodes[node_idx as usize];
-
-                let is_original = f_idx == 0;
-
-                // A node is a hardlink if it shares its file ID with another node in the group
-                let is_hardlink = file_id != (0, 0)
-                    && paired
-                        .iter()
-                        .any(|other| other.0 != node_idx && other.1 == file_id);
-
-                let size_str = prettier_bytes::ByteFormatter::new()
-                    .format(group.size)
-                    .to_string();
-
-                let reclaimable_str = if is_original {
-                    prettier_bytes::ByteFormatter::new()
-                        .format(total_reclaimable)
-                        .to_string()
-                } else {
-                    let individual_reclaimable = if is_hardlink { 0 } else { group.size };
-                    prettier_bytes::ByteFormatter::new()
-                        .format(individual_reclaimable)
-                        .to_string()
-                };
-
-                let created_time_str = format_timestamp(node.created_timestamp);
-                let modified_time_str = format_timestamp(node.modified_timestamp);
-
-                flat_rows.push(DuplicateRow {
-                    node_idx,
-                    group_idx: g_idx,
-                    filename,
-                    parent_path,
-                    size: group.size,
-                    size_str,
-                    reclaimable_str,
-                    created_time_str,
-                    modified_time_str,
-                    is_original,
-                    is_hardlink,
-                });
-            }
-        }
-        self.deduplicator_flat_rows = flat_rows;
-        self.deduplicator_last_sig = current_sig;
-    }
 
     fn draw_deduplicator_results(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
         let progress_snap = self.deduplicator_progress.snapshot();
         let is_running = !progress_snap.finished && progress_snap.elapsed.is_some();
 
-        let active_groups = self.deduplicator_results.read().clone();
-        let active_groups_len = active_groups.len();
+        let (active_groups, flat_rows) = {
+            let guard = self.deduplicator_results.read();
+            (guard.groups.clone(), guard.flat_rows.clone())
+        };
 
-        let current_total_files: usize = active_groups.iter().map(|g| g.nodes.len()).sum();
-        let current_sig = (active_groups.len(), current_total_files);
-        if self.deduplicator_last_sig != current_sig {
-            self.check_rebuild_flat_rows(snapshot, &active_groups);
-        }
-
-        if active_groups_len == 0 && self.deduplicator_flat_rows.is_empty() {
+        if active_groups.is_empty() && flat_rows.is_empty() {
             ui.centered_and_justified(|ui| {
                 if is_running {
                     ui.label("Analyzing files...");
@@ -640,7 +457,6 @@ impl super::GuiApp {
         ui.add_space(6.0);
 
         let toggled_node = std::cell::Cell::new(None);
-        let flat_rows = &self.deduplicator_flat_rows;
         let selected = &self.selected_duplicates;
         let monospace_paths = self.monospace_paths;
         let is_scan_running = is_running;

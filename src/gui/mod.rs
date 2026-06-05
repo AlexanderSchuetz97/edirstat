@@ -58,11 +58,7 @@ pub struct GuiApp {
     pub(crate) filter_regex: bool,
 
     // Caching layer for tree search matches
-    pub(crate) cached_node_matches: Vec<bool>,
-    pub(crate) last_search_query: String,
-    pub(crate) last_filter_case_sensitive: bool,
-    pub(crate) last_filter_regex: bool,
-    pub(crate) last_search_snapshot_ptr: usize,
+    pub(crate) query_coordinator: crate::gui::explorer::QueryCoordinator,
 
     // Visualization tabs
     pub(crate) vis_mode: VisMode,
@@ -97,12 +93,10 @@ pub struct GuiApp {
     pub(crate) deduplicator_config: crate::stats::deduplicator::DeduplicatorConfig,
     pub(crate) deduplicator_progress: atomic_progress::Progress,
     pub(crate) deduplicator_results:
-        Arc<parking_lot::RwLock<Vec<crate::stats::deduplicator::DuplicateGroup>>>,
+        Arc<parking_lot::RwLock<crate::stats::deduplicator::DeduplicationResults>>,
     pub(crate) deduplicator_cancel: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) selected_duplicates: HashSet<u32>,
     pub(crate) delete_duplicates_indices: Vec<u32>,
-    pub(crate) deduplicator_flat_rows: Vec<crate::gui::deduplicator_tab::DuplicateRow>,
-    pub(crate) deduplicator_last_sig: (usize, usize),
 
     pub(crate) highlight_duplicates: bool,
 }
@@ -121,11 +115,7 @@ impl GuiApp {
             right_panel_collapsed: false,
             filter_case_sensitive: false,
             filter_regex: false,
-            cached_node_matches: Vec::new(),
-            last_search_query: String::new(),
-            last_filter_case_sensitive: false,
-            last_filter_regex: false,
-            last_search_snapshot_ptr: 0,
+            query_coordinator: crate::gui::explorer::QueryCoordinator::new(),
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
             treemap_chart: stats::treemap::TreemapChart::new(),
@@ -145,12 +135,12 @@ impl GuiApp {
             scroll_to_selected: false,
             deduplicator_config: crate::stats::deduplicator::DeduplicatorConfig::default(),
             deduplicator_progress: atomic_progress::Progress::new_spinner("Deduplicator"),
-            deduplicator_results: Arc::new(parking_lot::RwLock::new(Vec::new())),
+            deduplicator_results: Arc::new(parking_lot::RwLock::new(
+                crate::stats::deduplicator::DeduplicationResults::default(),
+            )),
             deduplicator_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             selected_duplicates: HashSet::new(),
             delete_duplicates_indices: Vec::new(),
-            deduplicator_flat_rows: Vec::new(),
-            deduplicator_last_sig: (0, 0),
 
             highlight_duplicates: false,
         }
@@ -166,17 +156,12 @@ impl GuiApp {
         self.active_modal = None;
         self.selected_duplicates.clear();
         self.delete_duplicates_indices.clear();
-        self.deduplicator_flat_rows.clear();
-        self.deduplicator_last_sig = (0, 0);
         self.deduplicator_cancel
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.deduplicator_progress = atomic_progress::Progress::new_spinner("Deduplicator");
-        *self.deduplicator_results.write() = Vec::new();
-        self.cached_node_matches.clear();
-        self.last_search_query.clear();
-        self.last_filter_case_sensitive = false;
-        self.last_filter_regex = false;
-        self.last_search_snapshot_ptr = 0;
+        *self.deduplicator_results.write() =
+            crate::stats::deduplicator::DeduplicationResults::default();
+        self.query_coordinator = crate::gui::explorer::QueryCoordinator::new();
         self.traversal_engine.stats().reset();
         self.treemap_chart = stats::treemap::TreemapChart::default();
         self.size_dist_chart = stats::size_distribution::SizeDistributionChart::default();

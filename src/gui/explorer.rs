@@ -4,6 +4,131 @@ use smallvec::SmallVec;
 use super::{GuiApp, theme};
 use crate::arena::{FileArenaSnapshot, NO_INDEX};
 
+pub struct QueryCoordinator {
+    pub cached_node_matches: Vec<bool>,
+    last_search_query: String,
+    last_filter_case_sensitive: bool,
+    last_filter_regex: bool,
+    last_highlight_duplicates: bool,
+    last_search_snapshot_ptr: usize,
+    last_selected_duplicates_len: usize,
+}
+
+impl QueryCoordinator {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            cached_node_matches: Vec::new(),
+            last_search_query: String::new(),
+            last_filter_case_sensitive: false,
+            last_filter_regex: false,
+            last_highlight_duplicates: false,
+            last_search_snapshot_ptr: 0,
+            last_selected_duplicates_len: 0,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        snapshot: &FileArenaSnapshot,
+        search_query: &str,
+        filter_case_sensitive: bool,
+        filter_regex: bool,
+        highlight_duplicates: bool,
+        selected_duplicates: &std::collections::HashSet<u32>,
+    ) {
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
+
+        let needs_rebuild = search_query != self.last_search_query
+            || filter_case_sensitive != self.last_filter_case_sensitive
+            || filter_regex != self.last_filter_regex
+            || highlight_duplicates != self.last_highlight_duplicates
+            || selected_duplicates.len() != self.last_selected_duplicates_len
+            || snapshot_ptr != self.last_search_snapshot_ptr
+            || self.cached_node_matches.is_empty();
+
+        if !needs_rebuild {
+            return;
+        }
+
+        self.last_search_query = search_query.to_string();
+        self.last_filter_case_sensitive = filter_case_sensitive;
+        self.last_filter_regex = filter_regex;
+        self.last_highlight_duplicates = highlight_duplicates;
+        self.last_selected_duplicates_len = selected_duplicates.len();
+        self.last_search_snapshot_ptr = snapshot_ptr;
+
+        self.cached_node_matches.clear();
+        self.cached_node_matches.resize(snapshot.nodes.len(), false);
+
+        if !search_query.is_empty() && !snapshot.nodes.is_empty() {
+            let regex_matcher = if filter_regex {
+                let mut builder = regex::RegexBuilder::new(search_query);
+                builder.case_insensitive(!filter_case_sensitive);
+                builder.build().ok()
+            } else {
+                None
+            };
+
+            // Single-pass O(N) reverse propagation of matched subtrees
+            for idx in (0..snapshot.nodes.len()).rev() {
+                let node = &snapshot.nodes[idx];
+                let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+
+                let self_matches = regex_matcher.as_ref().map_or_else(
+                    || {
+                        if filter_case_sensitive {
+                            name.contains(search_query)
+                        } else {
+                            name.to_lowercase()
+                                .contains(&search_query.to_lowercase())
+                        }
+                    },
+                    |re| re.is_match(name),
+                );
+
+                if self_matches {
+                    self.cached_node_matches[idx] = true;
+                }
+
+                // If this node matches, flag its parent recursively up to the root
+                if self.cached_node_matches[idx]
+                    && let Some(parent) = node.parent_opt()
+                    && (parent as usize) < self.cached_node_matches.len()
+                {
+                    self.cached_node_matches[parent as usize] = true;
+                }
+            }
+        }
+
+        if highlight_duplicates {
+            for &idx in selected_duplicates {
+                if (idx as usize) < self.cached_node_matches.len() {
+                    self.cached_node_matches[idx as usize] = true;
+
+                    // Propagate match to parents to keep them visible in the tree
+                    let mut curr = Some(idx);
+                    while let Some(c_idx) = curr {
+                        let node = &snapshot.nodes[c_idx as usize];
+                        if let Some(parent) = node.parent_opt() {
+                            self.cached_node_matches[parent as usize] = true;
+                            curr = Some(parent);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Default for QueryCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GuiApp {
     pub fn flatten_visible_tree(
         &mut self,
@@ -12,82 +137,14 @@ impl GuiApp {
         indent_level: usize,
         out: &mut Vec<(u32, usize)>,
     ) {
-        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
-
-        // Rebuild cache only if state parameters have changed since last frame
-        let needs_rebuild = self.search_query != self.last_search_query
-            || self.filter_case_sensitive != self.last_filter_case_sensitive
-            || self.filter_regex != self.last_filter_regex
-            || snapshot_ptr != self.last_search_snapshot_ptr
-            || self.cached_node_matches.is_empty();
-
-        if needs_rebuild {
-            self.last_search_query.clone_from(&self.search_query);
-            self.last_filter_case_sensitive = self.filter_case_sensitive;
-            self.last_filter_regex = self.filter_regex;
-            self.last_search_snapshot_ptr = snapshot_ptr;
-
-            self.cached_node_matches.clear();
-            self.cached_node_matches.resize(snapshot.nodes.len(), false);
-
-            if !self.search_query.is_empty() && !snapshot.nodes.is_empty() {
-                let regex_matcher = if self.filter_regex {
-                    let mut builder = regex::RegexBuilder::new(&self.search_query);
-                    builder.case_insensitive(!self.filter_case_sensitive);
-                    builder.build().ok()
-                } else {
-                    None
-                };
-
-                // Single-pass O(N) reverse propagation of matched subtrees
-                for idx in (0..snapshot.nodes.len()).rev() {
-                    let node = &snapshot.nodes[idx];
-                    let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
-
-                    let self_matches = if let Some(re) = &regex_matcher {
-                        re.is_match(name)
-                    } else if self.filter_case_sensitive {
-                        name.contains(&self.search_query)
-                    } else {
-                        name.to_lowercase()
-                            .contains(&self.search_query.to_lowercase())
-                    };
-
-                    if self_matches {
-                        self.cached_node_matches[idx] = true;
-                    }
-
-                    // If this node matches, flag its parent recursively up to the root
-                    if self.cached_node_matches[idx]
-                        && let Some(parent) = node.parent_opt()
-                        && (parent as usize) < self.cached_node_matches.len()
-                    {
-                        self.cached_node_matches[parent as usize] = true;
-                    }
-                }
-            }
-
-            if self.highlight_duplicates {
-                let duplicate_set = &self.selected_duplicates;
-                for idx in 0..snapshot.nodes.len() {
-                    if duplicate_set.contains(&(idx as u32)) {
-                        self.cached_node_matches[idx] = true;
-
-                        // Propagate match to parents to keep them visible in the tree
-                        let mut curr = Some(idx as u32);
-                        while let Some(c_idx) = curr {
-                            let node = &snapshot.nodes[c_idx as usize];
-                            if let Some(parent) = node.parent_opt() {
-                                self.cached_node_matches[parent as usize] = true;
-                                curr = Some(parent);
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.query_coordinator.update(
+            snapshot,
+            &self.search_query,
+            self.filter_case_sensitive,
+            self.filter_regex,
+            self.highlight_duplicates,
+            &self.selected_duplicates,
+        );
 
         // Shared borrow of immutable self components (safely bypasses simultaneous borrow limits)
         self.flatten_visible_tree_impl(
@@ -95,7 +152,7 @@ impl GuiApp {
             node_idx,
             indent_level,
             out,
-            &self.cached_node_matches,
+            &self.query_coordinator.cached_node_matches,
         );
     }
 

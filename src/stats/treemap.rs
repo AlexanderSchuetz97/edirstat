@@ -297,7 +297,7 @@ fn recurse_child(
             || NO_EXTENSION.to_string(),
             |s| s.to_string_lossy().to_ascii_lowercase(),
         );
-        let color = get_color_for_extension(&ext);
+        let color = crate::colors::get_color_for_extension(&ext);
         blocks.push(TreemapBlock {
             rect: child_rect,
             node_idx: child_idx,
@@ -346,7 +346,7 @@ fn build_treemap(
             || NO_EXTENSION.to_string(),
             |s| s.to_string_lossy().to_ascii_lowercase(),
         );
-        let color = get_color_for_extension(&ext);
+        let color = crate::colors::get_color_for_extension(&ext);
 
         blocks.push(TreemapBlock {
             rect,
@@ -384,7 +384,7 @@ fn build_treemap(
             || NO_EXTENSION.to_string(),
             |s| s.to_string_lossy().to_ascii_lowercase(),
         );
-        let color = get_color_for_extension(&ext);
+        let color = crate::colors::get_color_for_extension(&ext);
         blocks.push(TreemapBlock {
             rect,
             node_idx,
@@ -520,31 +520,4 @@ fn build_treemap(
     }
 }
 
-fn get_color_for_extension(ext: &str) -> Color32 {
-    match ext {
-        "rs" => crate::colors::EXT_RUST,
-        "toml" => crate::colors::EXT_TOML,
-        "git" | "gitignore" => crate::colors::EXT_GIT,
-        "js" | "ts" => crate::colors::EXT_JS_TS,
-        "json" | "yaml" => crate::colors::EXT_CONFIG,
-        "html" | "css" => crate::colors::EXT_WEB,
-        "py" => crate::colors::EXT_PYTHON,
-        "c" | "cpp" | "h" => crate::colors::EXT_CPP,
-        "zip" | "tar" | "gz" => crate::colors::EXT_COMPRESSED,
-        "mp3" | "wav" | "flac" => crate::colors::EXT_AUDIO,
-        "mp4" | "mkv" | "avi" => crate::colors::EXT_VIDEO,
-        "png" | "jpg" | "jpeg" | "gif" => crate::colors::EXT_IMAGE,
-        NO_EXTENSION => crate::colors::EXT_NONE,
-        _ => {
-            let mut hash: u32 = 5381;
-            for c in ext.bytes() {
-                hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
-            }
-            #[allow(clippy::cast_precision_loss)]
-            let hue = (hash % 360) as f32 / 360.0;
 
-            let color = eframe::epaint::Hsva::new(hue, 0.75, 0.55, 1.0);
-            Color32::from(color)
-        }
-    }
-}

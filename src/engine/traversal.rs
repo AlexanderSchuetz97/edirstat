@@ -245,17 +245,6 @@ impl TraversalEngine {
     }
 }
 
-/// Safely translates `SystemTime` to seconds since Unix Epoch, maintaining signs for pre-1970 dates.
-fn system_time_to_unix_timestamp(t: std::time::SystemTime) -> i64 {
-    match t.duration_since(std::time::SystemTime::UNIX_EPOCH) {
-        Ok(duration) => duration.as_secs() as i64,
-        Err(err) => {
-            let neg_duration = err.duration();
-            -(neg_duration.as_secs() as i64)
-        }
-    }
-}
-
 fn scan_directory<F>(
     task: &ScanTask,
     worker_id: u8,
@@ -280,26 +269,14 @@ fn scan_directory<F>(
     for entry_res in entries {
         let Ok(entry) = entry_res else { continue };
 
-        let path = entry.path();
-
-        let Ok(metadata) = entry.metadata() else {
+        let Some(meta) = crate::arena::EntryMetadata::from_dir_entry(&entry) else {
             continue;
         };
 
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_symlink = metadata.is_symlink();
-
-        // Query metadata timestamps
-        let modified_timestamp = metadata.modified().map_or(0, system_time_to_unix_timestamp);
-        let created_timestamp = metadata.created().map_or(0, system_time_to_unix_timestamp);
-        let accessed_timestamp = metadata.accessed().map_or(0, system_time_to_unix_timestamp);
-
         // Check if directory
-        if metadata.is_dir() {
-            let file_id = get_file_id(&metadata);
-
+        if meta.is_dir {
             // Cycle Detection
-            if task.ancestors.contains(&file_id) {
+            if task.ancestors.contains(&meta.file_id) {
                 continue;
             }
 
@@ -314,10 +291,10 @@ fn scan_directory<F>(
                     child_worker_id: worker_id,
                     local_parent_id: parent_local_id,
                     local_child_id: child_local_id,
-                    name,
-                    modified_timestamp,
-                    created_timestamp,
-                    accessed_timestamp,
+                    name: meta.name,
+                    modified_timestamp: meta.modified_timestamp,
+                    created_timestamp: meta.created_timestamp,
+                    accessed_timestamp: meta.accessed_timestamp,
                 },
                 true,
                 event_tx,
@@ -325,10 +302,10 @@ fn scan_directory<F>(
 
             // Create a new task and push to local queue
             let mut new_ancestors = task.ancestors.clone();
-            new_ancestors.push(file_id);
+            new_ancestors.push(meta.file_id);
 
             let new_task = ScanTask {
-                path,
+                path: entry.path(),
                 parent_id: child_local_id,
                 worker_id,
                 ancestors: new_ancestors,
@@ -336,22 +313,21 @@ fn scan_directory<F>(
             local_worker.push(new_task);
         } else {
             // It's a file
-            let size = metadata.len();
             stats.files_scanned.fetch_add(1, Ordering::Relaxed);
             stats
                 .bytes_scanned
-                .fetch_add(size as usize, Ordering::Relaxed);
+                .fetch_add(meta.len as usize, Ordering::Relaxed);
 
             emit_event(
                 ScanEvent::FileDiscovered {
                     parent_worker_id: task.worker_id,
                     local_parent_id: parent_local_id,
-                    name,
-                    size,
-                    is_symlink,
-                    modified_timestamp,
-                    created_timestamp,
-                    accessed_timestamp,
+                    name: meta.name,
+                    size: meta.len,
+                    is_symlink: meta.is_symlink,
+                    modified_timestamp: meta.modified_timestamp,
+                    created_timestamp: meta.created_timestamp,
+                    accessed_timestamp: meta.accessed_timestamp,
                 },
                 false,
                 event_tx,

@@ -156,36 +156,6 @@ impl super::StatComponent for DirCompositionChart {
         // Build stacked BarCharts on demand
         let mut unstacked_charts = Vec::new();
 
-        // Color mapping helper matching the global layout extensions
-        let color_for_ext = |ext: &str| -> eframe::egui::Color32 {
-            match ext {
-                "rs" => crate::colors::EXT_RUST,
-                "toml" => crate::colors::EXT_TOML,
-                "git" | "gitignore" => crate::colors::EXT_GIT,
-                "js" | "ts" => crate::colors::EXT_JS_TS,
-                "json" | "yaml" => crate::colors::EXT_CONFIG,
-                "html" | "css" => crate::colors::EXT_WEB,
-                "py" => crate::colors::EXT_PYTHON,
-                "c" | "cpp" | "h" => crate::colors::EXT_CPP,
-                "zip" | "tar" | "gz" => crate::colors::EXT_COMPRESSED,
-                "mp3" | "wav" | "flac" => crate::colors::EXT_AUDIO,
-                "mp4" | "mkv" | "avi" => crate::colors::EXT_VIDEO,
-                "png" | "jpg" | "jpeg" | "gif" => crate::colors::EXT_IMAGE,
-                "(no extension)" => crate::colors::EXT_NONE,
-                _ => {
-                    let mut hash: u32 = 5381;
-                    for c in ext.bytes() {
-                        hash = ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32);
-                    }
-                    #[allow(clippy::cast_precision_loss)]
-                    let hue = (hash % 360) as f32 / 360.0;
-                    eframe::egui::Color32::from(eframe::egui::epaint::Hsva::new(
-                        hue, 0.75, 0.55, 1.0,
-                    ))
-                }
-            }
-        };
-
         // Create individual BarChart bars for each top extension
         for ext in &self.top_extensions {
             let mut bars = Vec::new();
@@ -202,7 +172,7 @@ impl super::StatComponent for DirCompositionChart {
             let chart = BarChart::new(ext.clone(), bars)
                 .width(0.5)
                 .name(format!(".{ext} files"))
-                .color(color_for_ext(ext));
+                .color(crate::colors::get_color_for_extension(ext));
             unstacked_charts.push(chart);
         }
 

@@ -9,6 +9,8 @@ use std::{
     time::Instant,
 };
 
+use prettier_bytes::ByteFormatter;
+
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 pub const HASH_BLOCK_SIZE: usize = 4096; // 4KB hashing block size
@@ -19,6 +21,141 @@ pub struct DuplicateGroup {
     pub size: u64,
     pub nodes: Vec<u32>,
     pub file_ids: Vec<(u64, u64)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct DuplicateRow {
+    pub node_idx: u32,
+    pub group_idx: usize,
+    pub filename: String,
+    pub parent_path: String,
+    pub size: u64,
+    pub size_str: String,
+    pub reclaimable_str: String,
+    pub created_time_str: String,
+    pub modified_time_str: String,
+    pub is_original: bool,
+    pub is_hardlink: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DeduplicationResults {
+    pub groups: Vec<DuplicateGroup>,
+    pub flat_rows: Vec<DuplicateRow>,
+}
+
+impl DeduplicationResults {
+    pub fn rebuild_flat_rows(&mut self, snapshot: &crate::arena::FileArenaSnapshot) {
+        let current_total_files: usize = self.groups.iter().map(|g| g.nodes.len()).sum();
+        let mut flat_rows = Vec::with_capacity(current_total_files);
+
+        for (g_idx, group) in self.groups.iter().enumerate() {
+            let mut paired: Vec<(u32, (u64, u64))> = group
+                .nodes
+                .iter()
+                .copied()
+                .zip(group.file_ids.iter().copied())
+                .collect();
+            if paired.len() < group.nodes.len() {
+                paired = group
+                    .nodes
+                    .iter()
+                    .copied()
+                    .map(|idx| (idx, (0, 0)))
+                    .collect();
+            }
+
+            paired.sort_by(|a, b| {
+                let node_a = &snapshot.nodes[a.0 as usize];
+                let node_b = &snapshot.nodes[b.0 as usize];
+
+                let mod_cmp = node_a.modified_timestamp.cmp(&node_b.modified_timestamp);
+                if mod_cmp != std::cmp::Ordering::Equal {
+                    return mod_cmp;
+                }
+
+                let cre_cmp = node_a.created_timestamp.cmp(&node_b.created_timestamp);
+                if cre_cmp != std::cmp::Ordering::Equal {
+                    return cre_cmp;
+                }
+
+                let name_a = snapshot.string_pool.get(node_a.name_id).unwrap_or("");
+                let name_b = snapshot.string_pool.get(node_b.name_id).unwrap_or("");
+                name_a.len().cmp(&name_b.len())
+            });
+
+            let unique_inodes_count = {
+                let mut ids: Vec<(u64, u64)> = paired
+                    .iter()
+                    .map(|p| p.1)
+                    .filter(|&id| id != (0, 0))
+                    .collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids.len()
+            };
+            let total_reclaimable = if unique_inodes_count > 0 {
+                group.size * (unique_inodes_count as u64 - 1)
+            } else {
+                group.size * (paired.len().saturating_sub(1) as u64)
+            };
+
+            for (f_idx, &(node_idx, file_id)) in paired.iter().enumerate() {
+                let full_path = snapshot.get_full_path(node_idx);
+                let path = std::path::Path::new(&full_path);
+
+                let filename = path
+                    .file_name()
+                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+
+                let parent_path = path
+                    .parent()
+                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+
+                let node = &snapshot.nodes[node_idx as usize];
+
+                let is_original = f_idx == 0;
+
+                let is_hardlink = file_id != (0, 0)
+                    && paired
+                        .iter()
+                        .any(|other| other.0 != node_idx && other.1 == file_id);
+
+                let size_str = ByteFormatter::new()
+                    .format(group.size)
+                    .to_string();
+
+                let reclaimable_str = if is_original {
+                    ByteFormatter::new()
+                        .format(total_reclaimable)
+                        .to_string()
+                } else {
+                    let individual_reclaimable = if is_hardlink { 0 } else { group.size };
+                    ByteFormatter::new()
+                        .format(individual_reclaimable)
+                        .to_string()
+                };
+
+                let created_time_str = crate::model::time_utils::format_epoch(node.created_timestamp, true);
+                let modified_time_str = crate::model::time_utils::format_epoch(node.modified_timestamp, true);
+
+                flat_rows.push(DuplicateRow {
+                    node_idx,
+                    group_idx: g_idx,
+                    filename,
+                    parent_path,
+                    size: group.size,
+                    size_str,
+                    reclaimable_str,
+                    created_time_str,
+                    modified_time_str,
+                    is_original,
+                    is_hardlink,
+                });
+            }
+        }
+        self.flat_rows = flat_rows;
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -191,12 +328,17 @@ pub type HashFn = dyn Fn(&str, u64, i64, i64) -> Option<[u8; 32]> + Send + Sync;
 pub fn run_deduplication(
     snapshot: Arc<crate::arena::FileArenaSnapshot>,
     progress: atomic_progress::Progress,
-    results: Arc<parking_lot::RwLock<Vec<DuplicateGroup>>>,
+    results: Arc<parking_lot::RwLock<DeduplicationResults>>,
     cancel: Arc<AtomicBool>,
     config: DeduplicatorConfig,
 ) {
     let start_time = Instant::now();
     let is_cancelled = || cancel.load(Ordering::SeqCst);
+    let update_results = |groups: Vec<DuplicateGroup>| {
+        let mut guard = results.write();
+        guard.groups = groups;
+        guard.rebuild_flat_rows(&snapshot);
+    };
 
     if is_cancelled() {
         progress.set_error(Some("Scan was cancelled."));
@@ -264,7 +406,7 @@ pub fn run_deduplication(
     // Sort descending by size to present largest first
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
 
-    (*results.write()).clone_from(&current_groups);
+    update_results(current_groups.clone());
 
     // Generic helper to process candidate groups during each hashing phase
     let run_hashing_phase = |current_groups: Vec<DuplicateGroup>,
@@ -369,7 +511,7 @@ pub fn run_deduplication(
     };
     current_groups = groups;
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
-    (*results.write()).clone_from(&current_groups);
+    update_results(current_groups.clone());
 
     // --- Phase 3: Midpoint Hashing ---
     let midpoint_hash_fn = |path: &str, size: u64, expected_mod: i64, expected_cre: i64| {
@@ -397,7 +539,7 @@ pub fn run_deduplication(
     };
     current_groups = groups;
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
-    (*results.write()).clone_from(&current_groups);
+    update_results(current_groups.clone());
 
     // --- Phase 4: Suffix Hashing ---
     let suffix_hash_fn = |path: &str, size: u64, expected_mod: i64, expected_cre: i64| {
@@ -424,7 +566,7 @@ pub fn run_deduplication(
     };
     current_groups = groups;
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
-    (*results.write()).clone_from(&current_groups);
+    update_results(current_groups.clone());
 
     // --- Phase 5: Multi-Range Hashing ---
     let multi_range_hash_fn = |path: &str, size: u64, expected_mod: i64, expected_cre: i64| {
@@ -444,7 +586,7 @@ pub fn run_deduplication(
     };
     current_groups = groups;
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
-    (*results.write()).clone_from(&current_groups);
+    update_results(current_groups.clone());
 
     // --- Phase 6: Full Hashing ---
     let full_hash_fn = |path: &str, _size: u64, expected_mod: i64, expected_cre: i64| {
@@ -461,7 +603,7 @@ pub fn run_deduplication(
     };
     current_groups = groups;
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
-    (*results.write()).clone_from(&current_groups);
+    update_results(current_groups.clone());
 
     // --- Phase 7: Validation ---
     let total_groups = current_groups.len();
@@ -553,7 +695,7 @@ pub fn run_deduplication(
         .format(reclaimable)
         .to_string();
 
-    *results.write() = final_groups;
+    update_results(final_groups);
 
     progress.set_name(format!(
         "Finished in {duration:.2?}! Found {final_groups_count} duplicate groups. Potential reclaimable space: {space_str}"
@@ -600,7 +742,7 @@ mod tests {
         let snapshot = shared_state.current_snapshot.load();
         assert!(!snapshot.nodes.is_empty());
 
-        let results = Arc::new(RwLock::new(Vec::new()));
+        let results = Arc::new(RwLock::new(DeduplicationResults::default()));
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = atomic_progress::Progress::new_spinner("Deduplicator");
         let config = DeduplicatorConfig {
@@ -611,7 +753,8 @@ mod tests {
 
         run_deduplication(snapshot.clone(), progress, results.clone(), cancel, config);
 
-        let groups = results.read();
+        let results_guard = results.read();
+        let groups = &results_guard.groups;
         assert_eq!(groups.len(), 1);
 
         let group = &groups[0];
@@ -622,7 +765,7 @@ mod tests {
         // Verify we have 2 unique inodes
         let mut unique_ids = group.file_ids.clone();
 
-        drop(groups);
+        drop(results_guard);
         unique_ids.sort_unstable();
         unique_ids.dedup();
         assert_eq!(unique_ids.len(), 2);

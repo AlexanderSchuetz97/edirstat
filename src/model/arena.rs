@@ -124,6 +124,24 @@ impl FileNode {
             Some(self.next_sibling)
         }
     }
+
+    #[must_use]
+    #[inline]
+    pub fn from_metadata(name_id: StringId, parent: Option<u32>, meta: &EntryMetadata) -> Self {
+        let mut node = Self::new(
+            name_id,
+            parent,
+            meta.is_dir,
+            meta.is_symlink,
+            meta.modified_timestamp,
+            meta.created_timestamp,
+            meta.accessed_timestamp,
+        );
+        if !meta.is_dir {
+            node.size = meta.len;
+        }
+        node
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -270,5 +288,60 @@ mod tests {
         assert_eq!(snapshot.get_full_path(0), "/home/tux");
         assert_eq!(snapshot.get_full_path(1), "/home/tux/Documents");
         assert_eq!(snapshot.get_full_path(2), "/home/tux/Documents/test.rs");
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EntryMetadata {
+    pub name: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub len: u64,
+    pub modified_timestamp: i64,
+    pub created_timestamp: i64,
+    pub accessed_timestamp: i64,
+    pub file_id: (u64, u64),
+}
+
+impl EntryMetadata {
+    pub fn from_dir_entry(entry: &std::fs::DirEntry) -> Option<Self> {
+        let metadata = entry.metadata().ok()?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = metadata.is_dir();
+        let is_symlink = metadata.is_symlink();
+        let len = metadata.len();
+
+        let modified_timestamp = metadata.modified().map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
+        let created_timestamp = metadata.created().map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
+        let accessed_timestamp = metadata.accessed().map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
+
+        #[cfg(unix)]
+        let file_id = {
+            use std::os::unix::fs::MetadataExt;
+            (metadata.dev(), metadata.ino())
+        };
+
+        #[cfg(windows)]
+        let file_id = {
+            use std::os::windows::fs::MetadataExt;
+            (
+                metadata.volume_serial_number().unwrap_or(0) as u64,
+                metadata.file_index().unwrap_or(0),
+            )
+        };
+
+        #[cfg(not(any(unix, windows)))]
+        let file_id = (0, 0);
+
+        Some(Self {
+            name,
+            is_dir,
+            is_symlink,
+            len,
+            modified_timestamp,
+            created_timestamp,
+            accessed_timestamp,
+            file_id,
+        })
     }
 }

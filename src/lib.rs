@@ -39,4 +39,4 @@ pub mod stats;
 pub use engine::{coordinator, traversal};
 pub use error::EdirstatError;
 pub use gui::theme as colors;
-pub use model::{arena, persistence};
+pub use model::{arena, persistence, time_utils};
