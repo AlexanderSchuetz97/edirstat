@@ -176,23 +176,26 @@ impl Default for DeduplicatorConfig {
 /// Helper function to check if a path is a system file or hidden
 #[must_use]
 pub fn is_excluded_path(path: &str, ignore_system: bool, ignore_hidden: bool) -> bool {
-    let path_lower = path.to_lowercase();
-
     if ignore_system {
-        // System directory and file patterns
-        if path_lower.contains("system volume information")
-            || path_lower.contains("$recycle.bin")
-            || path_lower.contains("windows/system32")
-            || path_lower.contains("/etc/")
-            || path_lower.contains("/var/")
-            || path_lower.contains("/usr/")
-            || path_lower.contains("/proc/")
-            || path_lower.contains("/sys/")
-            || path_lower.contains("/dev/")
-            || path_lower.contains("swapfile")
-            || path_lower.contains("pagefile.sys")
-        {
-            return true;
+        // Predefined lowercase segments to avoid runtime conversion allocations
+        let system_patterns = [
+            "system volume information",
+            "$recycle.bin",
+            "windows/system32",
+            "/etc/",
+            "/var/",
+            "/usr/",
+            "/proc/",
+            "/sys/",
+            "/dev/",
+            "swapfile",
+            "pagefile.sys",
+        ];
+
+        for pattern in &system_patterns {
+            if crate::model::arena::contains_case_insensitive(path, pattern) {
+                return true;
+            }
         }
     }
 

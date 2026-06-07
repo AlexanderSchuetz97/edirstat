@@ -41,23 +41,19 @@ impl super::StatsChart for SizeDistributionChart {
                 continue;
             }
             let size = node.size;
-            if size < 10_000 {
-                counts[0] += 1;
-            } else if size < 100_000 {
-                counts[1] += 1;
-            } else if size < 1_000_000 {
-                counts[2] += 1;
-            } else if size < 10_000_000 {
-                counts[3] += 1;
-            } else if size < 100_000_000 {
-                counts[4] += 1;
-            } else if size < 1_000_000_000 {
-                counts[5] += 1;
-            } else if size < 10_000_000_000 {
-                counts[6] += 1;
-            } else {
-                counts[7] += 1;
-            }
+
+            // Branchless comparison flags
+            let b1 = (size >= 10_000) as usize;
+            let b2 = (size >= 100_000) as usize;
+            let b3 = (size >= 1_000_000) as usize;
+            let b4 = (size >= 10_000_000) as usize;
+            let b5 = (size >= 100_000_000) as usize;
+            let b6 = (size >= 1_000_000_000) as usize;
+            let b7 = (size >= 10_000_000_000) as usize;
+
+            // The sum of satisfied thresholds yields the precise destination bucket index
+            let bucket_idx = b1 + b2 + b3 + b4 + b5 + b6 + b7;
+            counts[bucket_idx] += 1;
         }
         counts
     }
