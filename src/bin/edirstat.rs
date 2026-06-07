@@ -40,7 +40,7 @@ fn main() -> eframe::Result {
             .with_title("eDirStat - Cross-Platform Disk Usage Analyzer")
             .with_icon(
                 eframe::icon_data::from_png_bytes(
-                    &include_bytes!("../../assets/img/icon-256x.png")[..],
+                    &include_bytes!("../../assets/img/icon_512x.png")[..],
                 )
                 .map_err(|e| {
                     eprintln!("Failed to load icon: {e}");
