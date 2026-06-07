@@ -817,11 +817,10 @@ impl GuiApp {
                 .open(&mut open)
                 .show(ctx, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading(
-                            egui::RichText::new("eDirStat 👷")
-                                .strong()
-                                .color(ui.visuals().strong_text_color())
+                        ui.add(
+                            egui::Image::new(egui::include_image!("../../assets/img/logo-nosubtext-transparent.svg"))
                         );
+
                         ui.label(concat!("v", env!("CARGO_PKG_VERSION")));
                         ui.separator();
                         ui.label("By: Cody Wyatt Neiman (xangelix) <".to_owned() + "neiman" + "@" + "cody.to>");

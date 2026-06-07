@@ -527,6 +527,10 @@ impl GuiApp {
 }
 
 impl eframe::App for GuiApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui_extras::install_image_loaders(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
@@ -556,9 +560,13 @@ impl eframe::App for GuiApp {
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading(
-                    egui::RichText::new("eDirStat 👷")
+                    egui::RichText::new("eDirStat")
                         .strong()
                         .color(ui.visuals().strong_text_color()),
+                );
+                ui.add(
+                    egui::Image::new(egui::include_image!("../../assets/img/icon-transparent.svg"))
+                        .max_height(24.0)
                 );
                 ui.separator();
 

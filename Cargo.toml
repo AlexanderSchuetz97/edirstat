@@ -28,7 +28,7 @@ bytemuck = { version = "1.25.0", features = ["derive"] }
 compact_str = "0.9.1"
 crossbeam = "0.8.4"
 eframe = "0.34.3"
-egui_extras = "0.34.3"
+egui_extras = { version = "0.34.3", features = ["svg_text"] }
 egui_plot = "0.35.0"
 memmap2 = "0.9.10"
 open = "5.3.5"
