@@ -1399,20 +1399,44 @@ fn paint_gradient_rect(
     painter.add(mesh);
 }
 
+/// A branchless case-insensitive ASCII byte comparison.
+/// Structuring this cleanly allows the LLVM compiler to generate SIMD vector registers.
+#[inline]
+const fn ascii_case_insensitive_eq(h: u8, n: u8) -> bool {
+    if h == n {
+        return true;
+    }
+    // Check if they differ only by the 5th bit (uppercase vs lowercase shift)
+    // and that the character resides within the alphabetic ASCII range.
+    let diff = h ^ n;
+    if diff == 0x20 {
+        let h_lower = h | 0x20;
+        h_lower >= b'a' && h_lower <= b'z'
+    } else {
+        false
+    }
+}
+
 fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     if needle_lower.is_empty() {
         return true;
     }
+
     if haystack.is_ascii() && needle_lower.is_ascii() {
-        haystack
-            .as_bytes()
-            .windows(needle_lower.len())
-            .any(|window| {
-                window
-                    .iter()
-                    .zip(needle_lower.bytes())
-                    .all(|(&h, n)| h.to_ascii_lowercase() == n)
-            })
+        let h_bytes = haystack.as_bytes();
+        let n_bytes = needle_lower.as_bytes();
+
+        if h_bytes.len() < n_bytes.len() {
+            return false;
+        }
+
+        // Search for needle using a contiguous window match
+        h_bytes.windows(n_bytes.len()).any(|window| {
+            window
+                .iter()
+                .zip(n_bytes)
+                .all(|(&h, &n)| ascii_case_insensitive_eq(h, n))
+        })
     } else {
         // Fallback for non-ASCII paths
         haystack.to_lowercase().contains(needle_lower)
