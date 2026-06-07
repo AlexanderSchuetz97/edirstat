@@ -962,7 +962,6 @@ impl GuiApp {
         ui.vertical(|ui| {
             self.draw_central_panel_header(ui, snapshot);
             ui.separator();
-            ui.add_space(5.0);
 
             match self.vis_mode {
                 VisMode::Treemap => {
@@ -988,6 +987,7 @@ impl GuiApp {
                     }
                 }
                 VisMode::Plots => {
+                    ui.add_space(8.0);
                     if snapshot.nodes.is_empty() {
                         ui.centered_and_justified(|ui| {
                             ui.label("Scanned filesystem will be plotted here.");
@@ -1235,7 +1235,6 @@ impl GuiApp {
             ui.vertical(|ui| {
                 self.draw_central_panel_header(ui, snapshot);
                 ui.separator();
-                ui.add_space(5.0);
 
                 // Right Extensions Panel inside the bottom section if not collapsed
                 if !self.right_panel_collapsed && self.vis_mode != VisMode::Deduplicator {
@@ -1275,39 +1274,51 @@ impl GuiApp {
                         }
                     }
                     VisMode::Plots => {
-                        if snapshot.nodes.is_empty() {
-                            ui.centered_and_justified(|ui| {
-                                ui.label("Scanned filesystem will be plotted here.");
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 6,
+                                right: 6,
+                                top: 6,
+                                bottom: 0,
+                            })
+                            .show(ui, |ui| {
+                                if snapshot.nodes.is_empty() {
+                                    ui.centered_and_justified(|ui| {
+                                        ui.label("Scanned filesystem will be plotted here.");
+                                    });
+                                } else {
+                                    let mut context = stats::StatContext {
+                                        selected_nodes: &mut self.selected_nodes,
+                                        expanded_nodes: &mut self.expanded_nodes,
+                                        scroll_to_selected: &mut self.scroll_to_selected,
+                                        deduplicator_results: Some(&self.deduplicator_results),
+                                    };
+                                    match self.plot_type {
+                                        PlotType::SizeDistribution => {
+                                            self.size_dist_chart.render(ui, snapshot, &mut context);
+                                        }
+                                        PlotType::AgeSizeScatter => {
+                                            self.scatter_chart.render(ui, snapshot, &mut context);
+                                        }
+                                        PlotType::DirComposition => {
+                                            self.dir_comp_chart.render(ui, snapshot, &mut context);
+                                        }
+                                        PlotType::ExtensionBoxplot => {
+                                            self.boxplot_chart.render(ui, snapshot, &mut context);
+                                        }
+                                        PlotType::TemporalTimeline => {
+                                            self.timeline_chart.render(ui, snapshot, &mut context);
+                                        }
+                                        PlotType::DeduplicatorWaste => {
+                                            self.duplicate_waste_chart.render(
+                                                ui,
+                                                snapshot,
+                                                &mut context,
+                                            );
+                                        }
+                                    }
+                                }
                             });
-                        } else {
-                            let mut context = stats::StatContext {
-                                selected_nodes: &mut self.selected_nodes,
-                                expanded_nodes: &mut self.expanded_nodes,
-                                scroll_to_selected: &mut self.scroll_to_selected,
-                                deduplicator_results: Some(&self.deduplicator_results),
-                            };
-                            match self.plot_type {
-                                PlotType::SizeDistribution => {
-                                    self.size_dist_chart.render(ui, snapshot, &mut context);
-                                }
-                                PlotType::AgeSizeScatter => {
-                                    self.scatter_chart.render(ui, snapshot, &mut context);
-                                }
-                                PlotType::DirComposition => {
-                                    self.dir_comp_chart.render(ui, snapshot, &mut context);
-                                }
-                                PlotType::ExtensionBoxplot => {
-                                    self.boxplot_chart.render(ui, snapshot, &mut context);
-                                }
-                                PlotType::TemporalTimeline => {
-                                    self.timeline_chart.render(ui, snapshot, &mut context);
-                                }
-                                PlotType::DeduplicatorWaste => {
-                                    self.duplicate_waste_chart
-                                        .render(ui, snapshot, &mut context);
-                                }
-                            }
-                        }
                     }
                     VisMode::Deduplicator => {
                         self.render_deduplicator_tab(ui, snapshot);
