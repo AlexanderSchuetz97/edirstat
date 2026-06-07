@@ -1225,7 +1225,7 @@ mod tests {
         let snapshot = shared_state.current_snapshot.load();
         assert!(!snapshot.nodes.is_empty());
 
-        let mut app = GuiApp::new(shared_state, engine);
+        let mut app = GuiApp::new(shared_state, engine, None);
 
         // Scan duplicates using run_deduplication
         let progress = atomic_progress::Progress::new_spinner("Deduplicator");
@@ -1267,6 +1267,77 @@ mod tests {
         // Verify that the softlinked node has been removed from the results
         assert!(app.deduplicator_results.read().groups.is_empty());
         assert!(app.deduplicator_results.read().flat_rows.is_empty());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_gui_app_new_with_initial_path() -> Result<(), crate::EdirstatError> {
+        let temp_dir = std::env::current_dir()?
+            .join("target")
+            .join("test_gui_app_initial_path");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir)?;
+
+        let test_file = temp_dir.join("test.txt");
+        std::fs::write(&test_file, b"hello world")?;
+
+        let shared_state = Arc::new(SharedState::new());
+        let engine = Arc::new(TraversalEngine::new());
+
+        // Test scanning a directory
+        let app = GuiApp::new(shared_state.clone(), engine, Some(temp_dir.clone()));
+
+        // Wait for the background scan to start
+        let mut attempts = 0;
+        while !shared_state.is_scanning.load(Ordering::SeqCst) && attempts < 200 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            attempts += 1;
+        }
+
+        // Wait for the background scan to complete
+        attempts = 0;
+        while shared_state.is_scanning.load(Ordering::SeqCst) && attempts < 200 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            attempts += 1;
+        }
+
+        let snapshot = shared_state.current_snapshot.load();
+        assert!(!snapshot.nodes.is_empty());
+        assert_eq!(app.current_scan_path, Some(temp_dir.clone()));
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_gui_app_new_with_snapshot_file() -> Result<(), crate::EdirstatError> {
+        let temp_dir = std::env::current_dir()?
+            .join("target")
+            .join("test_gui_app_snapshot_file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir)?;
+
+        let mut pool = crate::arena::StringPool::new();
+        let name_root = pool.get_or_insert(b"/");
+        let nodes = vec![crate::arena::FileNode::new(
+            name_root, None, true, false, 0, 0, 0,
+        )];
+        let test_file = temp_dir.join("test_snapshot.edst");
+        crate::persistence::save_snapshot(&nodes, &pool, &test_file)?;
+
+        let shared_state = Arc::new(SharedState::new());
+        let engine = Arc::new(TraversalEngine::new());
+
+        // Test loading snapshot file
+        let app = GuiApp::new(shared_state.clone(), engine, Some(test_file.clone()));
+
+        let snapshot = shared_state.current_snapshot.load();
+        assert!(!snapshot.nodes.is_empty());
+        assert_eq!(app.current_scan_path, Some(test_file));
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);

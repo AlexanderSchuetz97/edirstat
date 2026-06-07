@@ -119,8 +119,12 @@ pub struct GuiApp {
 
 impl GuiApp {
     #[must_use]
-    pub fn new(shared_state: Arc<SharedState>, traversal_engine: Arc<TraversalEngine>) -> Self {
-        Self {
+    pub fn new(
+        shared_state: Arc<SharedState>,
+        traversal_engine: Arc<TraversalEngine>,
+        initial_path: Option<PathBuf>,
+    ) -> Self {
+        let mut app = Self {
             shared_state,
             traversal_engine,
             selected_node_idx: None,
@@ -166,7 +170,23 @@ impl GuiApp {
 
             highlight_duplicates: false,
             hovered_node_idx: None,
+        };
+
+        if let Some(path) = initial_path {
+            if path.exists() {
+                if path.is_dir() {
+                    app.start_scan(path);
+                } else if path.is_file()
+                    && let Err(e) = app.load_snapshot_file(path.clone())
+                {
+                    eprintln!("Error loading snapshot file {}: {}", path.display(), e);
+                }
+            } else {
+                eprintln!("Error: Path does not exist: {}", path.display());
+            }
         }
+
+        app
     }
 
     fn reset_state(&mut self) {
@@ -231,6 +251,58 @@ impl GuiApp {
                 println!("Failed to start traversal: {e}");
             }
         }
+    }
+
+    pub fn load_snapshot_file(&mut self, path: PathBuf) -> Result<(), crate::EdirstatError> {
+        let (arena, string_pool) = load_snapshot(&path)?;
+        self.reset_state();
+
+        // Select the root row by default
+        self.selected_nodes.insert(0);
+        self.selected_node_idx = Some(0);
+        self.focus_node_idx = Some(0);
+
+        let loaded_snapshot = FileArenaSnapshot {
+            nodes: Arc::new(arena.nodes().to_vec()),
+            string_pool: Arc::new(string_pool),
+            dir_counts: Arc::new(precompute_dir_counts(arena.nodes())),
+        };
+        self.shared_state
+            .current_snapshot
+            .store(Arc::new(loaded_snapshot));
+        self.current_scan_path = Some(path);
+        self.scan_start_time = None;
+
+        // Rebuild extension stats exactly once in the background upon load
+        let mut ext_map: HashMap<String, (u64, u32)> = HashMap::new();
+        for node in self.shared_state.current_snapshot.load().nodes.iter() {
+            if node.is_directory() {
+                continue;
+            }
+            if let Some(name) = self
+                .shared_state
+                .current_snapshot
+                .load()
+                .string_pool
+                .get(node.name_id)
+            {
+                let ext = Path::new(name).extension().map_or_else(
+                    || NO_EXTENSION.to_string(),
+                    |s| s.to_string_lossy().to_ascii_lowercase(),
+                );
+                let entry = ext_map.entry(ext).or_insert((0, 0));
+                entry.0 += node.size;
+                entry.1 += 1;
+            }
+        }
+        let mut stats: Vec<(String, u64, u32)> = ext_map
+            .into_iter()
+            .map(|(ext, (total_size, file_count))| (ext, total_size, file_count))
+            .collect();
+        stats.sort_by_key(|b| std::cmp::Reverse(b.1));
+        self.shared_state.extension_stats.store(Arc::new(stats));
+
+        Ok(())
     }
 
     /// Renders the shared "File" actions used in both the top toolbar and node context menus.
@@ -675,62 +747,8 @@ impl eframe::App for GuiApp {
                     let file_opt = FileDialog::new()
                         .add_filter("eDirStat Snapshot", &["edst"])
                         .pick_file();
-                    if let Some(path) = file_opt {
-                        match load_snapshot(&path) {
-                            Ok((arena, string_pool)) => {
-                                self.reset_state();
-
-                                // Select the root row by default
-                                self.selected_nodes.insert(0);
-                                self.selected_node_idx = Some(0);
-                                self.focus_node_idx = Some(0);
-
-                                let loaded_snapshot = FileArenaSnapshot {
-                                    nodes: Arc::new(arena.nodes().to_vec()),
-                                    string_pool: Arc::new(string_pool),
-                                    dir_counts: Arc::new(precompute_dir_counts(arena.nodes())),
-                                };
-                                self.shared_state
-                                    .current_snapshot
-                                    .store(Arc::new(loaded_snapshot));
-                                self.current_scan_path = Some(path);
-                                self.scan_start_time = None;
-
-                                // Rebuild extension stats exactly once in the background upon load
-                                let mut ext_map: HashMap<String, (u64, u32)> = HashMap::new();
-                                for node in self.shared_state.current_snapshot.load().nodes.iter() {
-                                    if node.is_directory() {
-                                        continue;
-                                    }
-                                    if let Some(name) = self
-                                        .shared_state
-                                        .current_snapshot
-                                        .load()
-                                        .string_pool
-                                        .get(node.name_id)
-                                    {
-                                        let ext = Path::new(name).extension().map_or_else(
-                                            || NO_EXTENSION.to_string(),
-                                            |s| s.to_string_lossy().to_ascii_lowercase(),
-                                        );
-                                        let entry = ext_map.entry(ext).or_insert((0, 0));
-                                        entry.0 += node.size;
-                                        entry.1 += 1;
-                                    }
-                                }
-                                let mut stats: Vec<(String, u64, u32)> = ext_map
-                                    .into_iter()
-                                    .map(|(ext, (total_size, file_count))| {
-                                        (ext, total_size, file_count)
-                                    })
-                                    .collect();
-                                stats.sort_by_key(|b| std::cmp::Reverse(b.1));
-                                self.shared_state.extension_stats.store(Arc::new(stats));
-                            }
-                            Err(e) => {
-                                println!("Failed to load snapshot: {e}");
-                            }
-                        }
+                    if let Some(path) = file_opt && let Err(e) = self.load_snapshot_file(path) {
+                        println!("Failed to load snapshot: {e}");
                     }
                 }
 

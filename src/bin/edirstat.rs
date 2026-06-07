@@ -25,11 +25,21 @@
 #![allow(clippy::crate_in_macro_def)]
 #![allow(clippy::too_many_lines)]
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
+use clap::Parser;
 use edirstat::{coordinator::SharedState, gui::GuiApp, traversal::TraversalEngine};
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Directory to scan or snapshot file to load
+    path: Option<PathBuf>,
+}
+
 fn main() -> eframe::Result {
+    let args = Args::parse();
+
     // Create system states
     let shared_state = Arc::new(SharedState::new());
     let traversal_engine = Arc::new(TraversalEngine::new());
@@ -52,9 +62,17 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
+    let initial_path = args.path;
+
     eframe::run_native(
         "edirstat",
         native_options,
-        Box::new(|_cc| Ok(Box::new(GuiApp::new(shared_state, traversal_engine)))),
+        Box::new(move |_cc| {
+            Ok(Box::new(GuiApp::new(
+                shared_state,
+                traversal_engine,
+                initial_path,
+            )))
+        }),
     )
 }
