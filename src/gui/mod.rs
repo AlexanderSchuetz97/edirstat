@@ -203,6 +203,12 @@ impl GuiApp {
 
     pub(crate) fn start_scan(&mut self, path: PathBuf) {
         self.reset_state();
+
+        // Select the root row by default
+        self.selected_nodes.insert(0);
+        self.selected_node_idx = Some(0);
+        self.focus_node_idx = Some(0);
+
         self.current_scan_path = Some(path.clone());
         self.scan_start_time = Some(Instant::now());
         self.total_scan_duration = None;
@@ -490,6 +496,12 @@ impl eframe::App for GuiApp {
                         match load_snapshot(&path) {
                             Ok((arena, string_pool)) => {
                                 self.reset_state();
+
+                                // Select the root row by default
+                                self.selected_nodes.insert(0);
+                                self.selected_node_idx = Some(0);
+                                self.focus_node_idx = Some(0);
+
                                 let loaded_snapshot = FileArenaSnapshot {
                                     nodes: Arc::new(arena.nodes().to_vec()),
                                     string_pool: Arc::new(string_pool),
