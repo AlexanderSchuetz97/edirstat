@@ -10,7 +10,7 @@ use arc_swap::ArcSwap;
 use crossbeam::channel::Receiver;
 
 use super::traversal::{LocalId, ScanEvent};
-use crate::arena::{FileArenaSnapshot, FileNode, NO_INDEX, StringPool};
+use crate::arena::{FileArenaSnapshot, FileNode, NO_INDEX, StringPool, precompute_dir_counts};
 
 pub struct SharedState {
     /// Atomic pointer to the latest immutable snapshot of the tree
@@ -33,6 +33,7 @@ impl SharedState {
         let initial_snapshot = FileArenaSnapshot {
             nodes: Arc::new(Vec::new()),
             string_pool: Arc::new(StringPool::new()),
+            dir_counts: Arc::new(Vec::new()),
         };
         Self {
             current_snapshot: ArcSwap::new(Arc::new(initial_snapshot)),
@@ -209,9 +210,11 @@ impl Coordinator {
 
             // Publish snapshot if dirty and interval elapsed
             if dirty && last_publish.elapsed() >= publish_interval {
+                let dir_counts = Arc::new(precompute_dir_counts(&arena));
                 let snapshot = FileArenaSnapshot {
                     nodes: Arc::new(arena.clone()),
                     string_pool: Arc::new(string_pool.clone()),
+                    dir_counts,
                 };
                 self.shared_state.current_snapshot.store(Arc::new(snapshot));
 
@@ -229,9 +232,11 @@ impl Coordinator {
         }
 
         // Final publish at completion
+        let dir_counts = Arc::new(precompute_dir_counts(&arena));
         let snapshot = FileArenaSnapshot {
             nodes: Arc::new(arena),
             string_pool: Arc::new(string_pool),
+            dir_counts,
         };
         self.shared_state.current_snapshot.store(Arc::new(snapshot));
 

@@ -200,6 +200,8 @@ pub struct FileArenaSnapshot {
     pub nodes: Arc<Vec<FileNode>>,
     /// Read-only snapshot of the string pool
     pub string_pool: Arc<StringPool>,
+    /// Precomputed subdirectory counts indexed by node ID
+    pub dir_counts: Arc<Vec<u32>>,
 }
 
 impl FileArenaSnapshot {
@@ -245,6 +247,23 @@ impl FileArenaSnapshot {
     }
 }
 
+#[must_use]
+pub fn precompute_dir_counts(nodes: &[FileNode]) -> Vec<u32> {
+    let mut counts = vec![0; nodes.len()];
+    for idx in (0..nodes.len()).rev() {
+        let node = &nodes[idx];
+        if node.is_directory()
+            && let Some(parent) = node.parent_opt()
+        {
+            let parent_idx = parent as usize;
+            if parent_idx < counts.len() {
+                counts[parent_idx] += 1 + counts[idx];
+            }
+        }
+    }
+    counts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,9 +299,11 @@ mod tests {
             FileNode::new(file_id, Some(1), false, false, 0, 0, 0),
         ];
 
+        let dir_counts = precompute_dir_counts(&nodes);
         let snapshot = FileArenaSnapshot {
             nodes: Arc::new(nodes),
             string_pool: Arc::new(pool),
+            dir_counts: Arc::new(dir_counts),
         };
 
         assert_eq!(snapshot.get_full_path(0), "/home/tux");

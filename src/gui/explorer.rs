@@ -408,23 +408,6 @@ impl GuiApp {
             self.expanded_nodes.insert(0);
         }
 
-        // Compute and cache subdirectory counts
-        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
-        if self.last_dir_counts_snapshot_ptr != snapshot_ptr {
-            self.last_dir_counts_snapshot_ptr = snapshot_ptr;
-            self.cached_dir_counts.clear();
-            self.cached_dir_counts.resize(snapshot.nodes.len(), 0);
-            for idx in (0..snapshot.nodes.len()).rev() {
-                let node = &snapshot.nodes[idx];
-                if node.is_directory()
-                    && let Some(parent) = node.parent_opt()
-                    && (parent as usize) < self.cached_dir_counts.len()
-                {
-                    self.cached_dir_counts[parent as usize] += 1 + self.cached_dir_counts[idx];
-                }
-            }
-        }
-
         let mut visible_nodes = Vec::new();
         self.flatten_visible_tree(snapshot, 0, 0, &mut visible_nodes);
 
@@ -492,7 +475,7 @@ impl GuiApp {
                         0
                     };
                     let subdirs_count = if node.is_directory() {
-                        *self.cached_dir_counts.get(node_idx as usize).unwrap_or(&0)
+                        *snapshot.dir_counts.get(node_idx as usize).unwrap_or(&0)
                     } else {
                         0
                     };
@@ -1088,7 +1071,7 @@ impl GuiApp {
 
                     let files_count = if is_dir { node.file_count } else { 0 };
                     let subdirs_count = if is_dir {
-                        *self.cached_dir_counts.get(node_idx as usize).unwrap_or(&0)
+                        *snapshot.dir_counts.get(node_idx as usize).unwrap_or(&0)
                     } else {
                         0
                     };

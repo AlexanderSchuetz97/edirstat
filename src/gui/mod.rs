@@ -8,6 +8,8 @@ use std::{
 use eframe::egui;
 use rfd::FileDialog;
 
+use crate::arena::precompute_dir_counts;
+
 use super::{
     arena::{FileArenaSnapshot, NO_EXTENSION},
     coordinator::SharedState,
@@ -74,8 +76,6 @@ pub struct GuiApp {
     pub(crate) vis_mode: VisMode,
     pub(crate) plot_type: PlotType,
     pub(crate) layout_mode: LayoutMode,
-    pub(crate) cached_dir_counts: Vec<u32>,
-    pub(crate) last_dir_counts_snapshot_ptr: usize,
 
     // Analytics components
     pub(crate) treemap_chart: stats::treemap::TreemapChart,
@@ -138,8 +138,6 @@ impl GuiApp {
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
             layout_mode: LayoutMode::WinDirStat,
-            cached_dir_counts: Vec::new(),
-            last_dir_counts_snapshot_ptr: 0,
             treemap_chart: stats::treemap::TreemapChart::new(),
             size_dist_chart: stats::size_distribution::SizeDistributionChart::new(),
             scatter_chart: stats::scatter_plot::FileAgeSizeScatterChart::new(),
@@ -193,8 +191,6 @@ impl GuiApp {
         self.query_coordinator = crate::gui::explorer::QueryCoordinator::new();
         self.traversal_engine.stats().reset();
         self.treemap_chart = stats::treemap::TreemapChart::default();
-        self.cached_dir_counts.clear();
-        self.last_dir_counts_snapshot_ptr = 0;
         self.size_dist_chart = stats::size_distribution::SizeDistributionChart::default();
         self.scatter_chart = stats::scatter_plot::FileAgeSizeScatterChart::default();
         self.dir_comp_chart = stats::dir_composition::DirCompositionChart::default();
@@ -497,6 +493,7 @@ impl eframe::App for GuiApp {
                                 let loaded_snapshot = FileArenaSnapshot {
                                     nodes: Arc::new(arena.nodes().to_vec()),
                                     string_pool: Arc::new(string_pool),
+                                    dir_counts: Arc::new(precompute_dir_counts(arena.nodes())),
                                 };
                                 self.shared_state
                                     .current_snapshot

@@ -221,6 +221,7 @@ impl super::GuiApp {
                     let snapshot_clone = Arc::new(FileArenaSnapshot {
                         nodes: snapshot.nodes.clone(),
                         string_pool: snapshot.string_pool.clone(),
+                        dir_counts: snapshot.dir_counts.clone(),
                     });
 
                     self.deduplicator_progress = atomic_progress::ProgressBuilder::new_spinner(

@@ -3,7 +3,7 @@ use std::sync::{Arc, atomic::Ordering};
 use eframe::egui;
 
 use super::{GuiApp, theme};
-use crate::arena::FileArenaSnapshot;
+use crate::arena::{FileArenaSnapshot, precompute_dir_counts};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveModal {
@@ -219,9 +219,11 @@ impl GuiApp {
             cloned_nodes[node_idx].next_sibling = crate::arena::NO_INDEX;
         }
 
+        let dir_counts = Arc::new(precompute_dir_counts(&cloned_nodes));
         let new_snapshot = crate::arena::FileArenaSnapshot {
             nodes: std::sync::Arc::new(cloned_nodes),
             string_pool: current_snap.string_pool.clone(),
+            dir_counts,
         };
         self.shared_state
             .current_snapshot
@@ -951,9 +953,11 @@ impl GuiApp {
             }
 
             // 4. Swap snapshot
+            let dir_counts = Arc::new(precompute_dir_counts(&cloned_nodes));
             let new_snapshot = FileArenaSnapshot {
                 nodes: Arc::new(cloned_nodes),
                 string_pool: Arc::new(string_pool),
+                dir_counts,
             };
             state.current_snapshot.store(Arc::new(new_snapshot));
 
