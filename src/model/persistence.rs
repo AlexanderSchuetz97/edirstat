@@ -155,7 +155,8 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
         let start = offset.offset as usize;
         let end = start + offset.len as usize;
         if end <= string_pool.data.len() {
-            let key = string_pool.data[start..end].to_vec();
+            let slice = &string_pool.data[start..end];
+            let key = compact_str::CompactString::from_utf8_lossy(slice);
             string_pool.lookup.insert(key, StringId(i as u32));
         }
     }

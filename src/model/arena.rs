@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
+use compact_str::CompactString;
 
 pub const NO_INDEX: u32 = u32::MAX;
 pub const NO_EXTENSION: &str = "(no extension)";
@@ -151,7 +152,7 @@ pub struct StringPool {
     /// Offsets and lengths of strings, indexed by `StringId`
     pub offsets: Vec<StringOffset>,
     /// Hash map for deduplicating newly encountered strings during scan
-    pub lookup: HashMap<Vec<u8>, StringId>,
+    pub lookup: HashMap<CompactString, StringId>,
 }
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
@@ -168,7 +169,9 @@ impl StringPool {
     }
 
     pub fn get_or_insert(&mut self, s: &[u8]) -> StringId {
-        if let Some(&id) = self.lookup.get(s) {
+        // Convert slice to helper representation for lookup
+        let s_str = std::str::from_utf8(s).unwrap_or("");
+        if let Some(&id) = self.lookup.get(s_str) {
             return id;
         }
 
@@ -178,7 +181,10 @@ impl StringPool {
 
         let id = StringId(self.offsets.len() as u32);
         self.offsets.push(StringOffset { offset, len });
-        self.lookup.insert(s.to_vec(), id);
+
+        // CompactString will store the key inline if it's under 24 bytes
+        let compact_key = CompactString::new(s_str);
+        self.lookup.insert(compact_key, id);
         id
     }
 
@@ -314,7 +320,7 @@ mod tests {
 
 #[derive(Debug, Clone)]
 pub struct EntryMetadata {
-    pub name: String,
+    pub name: CompactString,
     pub is_dir: bool,
     pub is_symlink: bool,
     pub len: u64,
@@ -327,7 +333,7 @@ pub struct EntryMetadata {
 impl EntryMetadata {
     pub fn from_dir_entry(entry: &std::fs::DirEntry) -> Option<Self> {
         let metadata = entry.metadata().ok()?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+        let name = entry.file_name().to_string_lossy().into();
         let is_dir = metadata.is_dir();
         let is_symlink = metadata.is_symlink();
         let len = metadata.len();

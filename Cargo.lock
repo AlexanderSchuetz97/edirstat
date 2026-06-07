@@ -938,6 +938,7 @@ dependencies = [
  "atomic-progress",
  "blake3",
  "bytemuck",
+ "compact_str",
  "crossbeam",
  "eframe",
  "egui_extras",

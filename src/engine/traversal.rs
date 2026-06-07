@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use compact_str::CompactString;
 use crossbeam::{
     channel::Sender,
     deque::{Injector, Worker},
@@ -31,7 +32,7 @@ pub enum ScanEvent {
         child_worker_id: u8,
         local_parent_id: LocalId,
         local_child_id: LocalId,
-        name: String,
+        name: CompactString,
         modified_timestamp: i64,
         created_timestamp: i64,
         accessed_timestamp: i64,
@@ -39,7 +40,7 @@ pub enum ScanEvent {
     FileDiscovered {
         parent_worker_id: u8,
         local_parent_id: LocalId,
-        name: String,
+        name: CompactString,
         size: u64,
         is_symlink: bool,
         modified_timestamp: i64,
@@ -340,7 +341,7 @@ fn scan_directory<F>(
         ScanEvent::FileDiscovered {
             parent_worker_id: task.worker_id,
             local_parent_id: parent_local_id,
-            name: String::new(),
+            name: CompactString::default(),
             size: 0,
             is_symlink: false,
             modified_timestamp: 0,
