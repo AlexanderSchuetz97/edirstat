@@ -1,7 +1,7 @@
 use eframe::egui;
 use smallvec::SmallVec;
 
-use super::{GuiApp, theme};
+use super::{ActiveModal, GuiApp, theme};
 use crate::arena::{FileArenaSnapshot, NO_INDEX};
 
 pub struct QueryCoordinator {
@@ -338,4 +338,893 @@ impl GuiApp {
             }
         }
     }
+
+    pub fn render_hierarchical_table(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
+        if snapshot.nodes.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label("Click 'Scan Directory' to explore disk usage.");
+            });
+            return;
+        }
+
+        // Auto-expand root
+        if self.expanded_nodes.is_empty() {
+            self.expanded_nodes.insert(0);
+        }
+
+        // Compute and cache subdirectory counts
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
+        if self.last_dir_counts_snapshot_ptr != snapshot_ptr {
+            self.last_dir_counts_snapshot_ptr = snapshot_ptr;
+            self.cached_dir_counts.clear();
+            self.cached_dir_counts.resize(snapshot.nodes.len(), 0);
+            for idx in (0..snapshot.nodes.len()).rev() {
+                let node = &snapshot.nodes[idx];
+                if node.is_directory()
+                    && let Some(parent) = node.parent_opt()
+                    && (parent as usize) < self.cached_dir_counts.len()
+                {
+                    self.cached_dir_counts[parent as usize] += 1 + self.cached_dir_counts[idx];
+                }
+            }
+        }
+
+        let mut visible_nodes = Vec::new();
+        self.flatten_visible_tree(snapshot, 0, 0, &mut visible_nodes);
+
+        let row_height = 24.0;
+        let available_height = ui.available_height();
+        let visuals = ui.visuals().clone();
+
+        let mut next_hovered = None;
+
+        egui_extras::TableBuilder::new(ui)
+            .id_salt("hierarchical_file_table")
+            .sense(egui::Sense::click())
+            .striped(true)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(egui_extras::Column::remainder().clip(true)) // Name
+            .column(egui_extras::Column::initial(140.0).range(80.0..=400.0)) // Percentage
+            .column(egui_extras::Column::initial(90.0).range(60.0..=200.0)) // Size
+            .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Items
+            .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Files
+            .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Subdirs
+            .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Last Modified
+            .min_scrolled_height(0.0)
+            .max_scroll_height(available_height)
+            .header(24.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("Name");
+                });
+                header.col(|ui| {
+                    ui.strong("Percentage");
+                });
+                header.col(|ui| {
+                    ui.strong("Size");
+                });
+                header.col(|ui| {
+                    ui.strong("Items");
+                });
+                header.col(|ui| {
+                    ui.strong("Files");
+                });
+                header.col(|ui| {
+                    ui.strong("Subdirs");
+                });
+                header.col(|ui| {
+                    ui.strong("Last Modified");
+                });
+            })
+            .body(|body| {
+                body.rows(row_height, visible_nodes.len(), |mut row| {
+                    let mut arrow_hovered = false;
+                    let r_idx = row.index();
+                    let (node_idx, indent) = visible_nodes[r_idx];
+                    let node = &snapshot.nodes[node_idx as usize];
+                    let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+                    let is_selected = self.selected_node_idx == Some(node_idx);
+                    let is_hovered = self.hovered_node_idx == Some(node_idx);
+                    let is_expanded = self.expanded_nodes.contains(&node_idx);
+                    let has_children = node.is_directory() && node.first_child != NO_INDEX;
+                    let is_duplicate =
+                        self.highlight_duplicates && self.selected_duplicates.contains(&node_idx);
+
+                    let files_count = if node.is_directory() {
+                        node.file_count
+                    } else {
+                        0
+                    };
+                    let subdirs_count = if node.is_directory() {
+                        *self.cached_dir_counts.get(node_idx as usize).unwrap_or(&0)
+                    } else {
+                        0
+                    };
+                    let items_count = files_count + subdirs_count;
+
+                    // Row-level click/hover state variables
+                    let mut row_clicked = false;
+                    let mut row_secondary_clicked = false;
+                    let mut row_hovered_by_mouse = false;
+
+                    let paint_bg = |ui: &mut egui::Ui, col_idx: usize| {
+                        let mut cell_rect = ui.max_rect();
+                        cell_rect.set_height(row_height);
+                        let spacing = ui.spacing().item_spacing.x;
+                        let mut highlight_rect = cell_rect;
+                        if col_idx > 0 {
+                            highlight_rect.min.x -= spacing / 2.0;
+                        } else {
+                            highlight_rect.min.x = ui.clip_rect().min.x;
+                        }
+                        if col_idx < 6 {
+                            highlight_rect.max.x += spacing / 2.0;
+                        } else {
+                            highlight_rect.max.x = ui.clip_rect().max.x;
+                        }
+                        if is_selected {
+                            let fill_color = visuals.selection.bg_fill.linear_multiply(0.20);
+                            ui.painter().rect_filled(highlight_rect, 0.0, fill_color);
+                        } else if is_hovered {
+                            let hover_color = visuals.widgets.hovered.bg_fill.linear_multiply(0.08);
+                            ui.painter().rect_filled(highlight_rect, 0.0, hover_color);
+                        }
+                    };
+
+                    // Render Name Column
+                    row.col(|ui| {
+                        paint_bg(ui, 0);
+
+                        // Indent space
+                        #[allow(clippy::cast_precision_loss)]
+                        ui.add_space(indent as f32 * 16.0);
+
+                        // Collapse/expand arrow with exact width of 16.0
+                        let (arrow_rect, arrow_resp) =
+                            ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+                        if has_children {
+                            arrow_hovered = arrow_resp.hovered();
+                            let arrow = if is_expanded { "⏷" } else { "⏵" };
+
+                            let arrow_color = if arrow_resp.hovered() {
+                                egui::Color32::from_rgb(59, 130, 246) // Bright blue hover indication
+                            } else {
+                                ui.visuals().widgets.inactive.text_color()
+                            };
+
+                            ui.painter().text(
+                                arrow_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                arrow,
+                                egui::FontId::monospace(12.0),
+                                arrow_color,
+                            );
+                            if arrow_resp.clicked() {
+                                if is_expanded {
+                                    self.expanded_nodes.remove(&node_idx);
+                                } else {
+                                    self.expanded_nodes.insert(node_idx);
+                                }
+                            }
+                            if arrow_resp.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                            }
+                        }
+
+                        // Icon
+                        let icon_text = if node.is_symlink() {
+                            "🔗"
+                        } else if node.is_directory() {
+                            "📁"
+                        } else {
+                            "📄"
+                        };
+                        ui.label(icon_text);
+
+                        // Name label
+                        let mut rich_name = egui::RichText::new(name);
+                        if self.monospace_paths {
+                            rich_name = rich_name.monospace();
+                        }
+                        if is_selected {
+                            rich_name = rich_name
+                                .strong()
+                                .color(ui.visuals().selection.stroke.color);
+                        } else if is_duplicate {
+                            rich_name = rich_name.color(theme::GLOW_INNER_CORE);
+                        }
+
+                        let name_width = ui.available_width().max(50.0);
+                        ui.allocate_ui(
+                            egui::vec2(name_width, ui.spacing().interact_size.y),
+                            |ui| {
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                ui.label(rich_name);
+                            },
+                        );
+
+                        // Render vertical dashed guidelines for tree structure
+                        let painter = ui.painter();
+                        let stroke = egui::Stroke::new(1.0, theme::INDENT_GUIDELINE);
+                        let mut cell_rect_guide = ui.max_rect();
+                        cell_rect_guide.set_height(row_height);
+                        for i in 0..indent {
+                            #[allow(clippy::cast_precision_loss)]
+                            let x = (i as f32).mul_add(16.0, cell_rect_guide.min.x) + 8.0;
+
+                            let dash_length = 2.0;
+                            let gap_length = 2.0;
+                            let step = dash_length + gap_length;
+                            let total_height = cell_rect_guide.max.y - cell_rect_guide.min.y;
+                            if total_height > 0.0 {
+                                let num_steps = (total_height / step).ceil() as usize;
+                                for step_idx in 0..num_steps {
+                                    #[allow(clippy::cast_precision_loss)]
+                                    let segment_y =
+                                        (step_idx as f32).mul_add(step, cell_rect_guide.min.y);
+                                    let next_y =
+                                        (segment_y + dash_length).min(cell_rect_guide.max.y);
+                                    painter.line_segment(
+                                        [egui::pos2(x, segment_y), egui::pos2(x, next_y)],
+                                        stroke,
+                                    );
+                                }
+                            }
+                        }
+
+                        // Interact with the entire cell
+                        let cell_resp = ui.interact(
+                            ui.max_rect(),
+                            ui.id().with(("cell_interact", 0)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() && !arrow_hovered {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() && !arrow_hovered {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() && !arrow_hovered {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Render Percentage Column
+                    row.col(|ui| {
+                        paint_bg(ui, 1);
+
+                        let mut cell_rect = ui.max_rect();
+                        cell_rect.set_height(row_height);
+
+                        let parent_idx = node.parent;
+                        let parent_size = if parent_idx == crate::arena::NO_INDEX {
+                            node.size.max(1)
+                        } else {
+                            snapshot.nodes[parent_idx as usize].size.max(1)
+                        };
+                        #[allow(clippy::cast_precision_loss)]
+                        let pct = (node.size as f32 / parent_size as f32).clamp(0.0, 1.0);
+
+                        let cell_width = cell_rect.width();
+                        #[allow(clippy::cast_precision_loss)]
+                        let inset_x = (indent as f32 * 4.0).min(cell_width * 0.3);
+                        let mut bar_rect = cell_rect;
+                        bar_rect.min.x += inset_x;
+
+                        // Center the progress bar vertically
+                        let bar_height = 14.0;
+                        let vertical_margin = (row_height - bar_height) / 2.0;
+                        bar_rect.min.y += vertical_margin;
+                        bar_rect.max.y -= vertical_margin;
+
+                        let colored_width = bar_rect.width() * pct;
+                        let mut colored_rect = bar_rect;
+                        colored_rect.max.x = colored_rect.min.x + colored_width;
+
+                        // Draw unfilled background portion (no rounding)
+                        let bg_color = ui.visuals().widgets.noninteractive.bg_fill;
+                        ui.painter().rect_filled(bar_rect, 0.0, bg_color);
+
+                        // Draw filled portion with extension-matching gradient (no rounding)
+                        if pct > 0.0 {
+                            let ext_color = if node.is_directory() {
+                                egui::Color32::from_rgb(110, 120, 135) // Neutral cool slate gray for directories
+                            } else {
+                                let ext = std::path::Path::new(name)
+                                    .extension()
+                                    .map_or_else(String::new, |s| {
+                                        s.to_string_lossy().to_ascii_lowercase()
+                                    });
+                                theme::get_color_for_extension(&ext)
+                            };
+                            let left_color = ext_color;
+                            let right_color = ext_color.linear_multiply(0.75);
+                            paint_gradient_rect(
+                                ui.painter(),
+                                colored_rect,
+                                left_color,
+                                right_color,
+                            );
+                        }
+
+                        // Draw text centered
+                        let text = format!("{:.1}%", pct * 100.0);
+                        let text_color = ui.visuals().widgets.active.text_color();
+                        ui.painter().text(
+                            bar_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            text,
+                            egui::FontId::monospace(10.0),
+                            text_color,
+                        );
+
+                        // Allocate space
+                        ui.allocate_rect(cell_rect, egui::Sense::empty());
+
+                        // Interact with the entire cell
+                        let cell_resp = ui.interact(
+                            ui.max_rect(),
+                            ui.id().with(("cell_interact", 1)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Render Size Column
+                    row.col(|ui| {
+                        paint_bg(ui, 2);
+
+                        ui.label(
+                            prettier_bytes::ByteFormatter::new()
+                                .format(node.size)
+                                .to_string(),
+                        );
+
+                        // Interact with the entire cell
+                        let cell_resp = ui.interact(
+                            ui.max_rect(),
+                            ui.id().with(("cell_interact", 2)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Render Items Column
+                    row.col(|ui| {
+                        paint_bg(ui, 3);
+
+                        if node.is_directory() {
+                            ui.label(format!("{items_count}"));
+                        } else {
+                            ui.label("-");
+                        }
+
+                        // Interact with the entire cell
+                        let cell_resp = ui.interact(
+                            ui.max_rect(),
+                            ui.id().with(("cell_interact", 3)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Render Files Column
+                    row.col(|ui| {
+                        paint_bg(ui, 4);
+
+                        if node.is_directory() {
+                            ui.label(format!("{files_count}"));
+                        } else {
+                            ui.label("-");
+                        }
+
+                        // Interact with the entire cell
+                        let cell_resp = ui.interact(
+                            ui.max_rect(),
+                            ui.id().with(("cell_interact", 4)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Render Subdirs Column
+                    row.col(|ui| {
+                        paint_bg(ui, 5);
+
+                        if node.is_directory() {
+                            ui.label(format!("{subdirs_count}"));
+                        } else {
+                            ui.label("-");
+                        }
+
+                        // Interact with the entire cell
+                        let cell_resp = ui.interact(
+                            ui.max_rect(),
+                            ui.id().with(("cell_interact", 5)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Render Last Modified Column
+                    row.col(|col_ui| {
+                        paint_bg(col_ui, 6);
+
+                        col_ui.label(crate::model::time_utils::format_epoch(
+                            node.modified_timestamp,
+                            true,
+                        ));
+
+                        // Interact with the entire cell
+                        let cell_resp = col_ui.interact(
+                            col_ui.max_rect(),
+                            col_ui.id().with(("cell_interact", 6)),
+                            egui::Sense::click(),
+                        );
+                        if cell_resp.hovered() {
+                            row_hovered_by_mouse = true;
+                        }
+                        if cell_resp.clicked() {
+                            row_clicked = true;
+                        }
+                        if cell_resp.secondary_clicked() {
+                            row_secondary_clicked = true;
+                        }
+                        cell_resp.context_menu(|ui| {
+                            self.draw_file_menu_contents(ui, snapshot);
+                        });
+                    });
+
+                    // Handle selection/hover updates at the end of the row columns loop
+                    if row_clicked {
+                        if self.selected_node_idx == Some(node_idx) {
+                            self.selected_node_idx = None;
+                        } else {
+                            self.selected_node_idx = Some(node_idx);
+                        }
+                    } else if row_secondary_clicked {
+                        self.selected_node_idx = Some(node_idx);
+                    }
+
+                    if row_hovered_by_mouse {
+                        next_hovered = Some(node_idx);
+                    }
+                });
+            });
+
+        self.hovered_node_idx = next_hovered;
+    }
+
+    pub fn render_file_detail_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &FileArenaSnapshot,
+        node_idx: u32,
+    ) {
+        if node_idx as usize >= snapshot.nodes.len() {
+            return;
+        }
+        let node = &snapshot.nodes[node_idx as usize];
+        let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+        let is_dir = node.is_directory();
+        let is_sym = node.is_symlink();
+
+        ui.vertical(|ui| {
+            // Header with Close Button
+            ui.horizontal(|ui| {
+                ui.heading(
+                    egui::RichText::new("ℹ Details")
+                        .strong()
+                        .color(ui.visuals().strong_text_color()),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("❌").on_hover_text("Deselect item").clicked() {
+                        self.selected_node_idx = None;
+                    }
+                });
+            });
+            ui.separator();
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Large Icon and Name
+                    ui.horizontal(|ui| {
+                        let icon = if is_sym {
+                            "🔗"
+                        } else if is_dir {
+                            "📁"
+                        } else {
+                            "📄"
+                        };
+                        ui.label(egui::RichText::new(icon).size(24.0));
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        ui.label(egui::RichText::new(name).strong().size(14.0));
+                    });
+                    ui.add_space(8.0);
+
+                    let files_count = if is_dir { node.file_count } else { 0 };
+                    let subdirs_count = if is_dir {
+                        *self.cached_dir_counts.get(node_idx as usize).unwrap_or(&0)
+                    } else {
+                        0
+                    };
+                    let items_count = files_count + subdirs_count;
+
+                    // Grid layout for fields to align nicely
+                    egui::Grid::new("file_details_grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            // Type field
+                            ui.weak("Type:");
+                            let type_str = if is_sym {
+                                "Symbolic Link"
+                            } else if is_dir {
+                                "Directory"
+                            } else {
+                                "File"
+                            };
+                            ui.allocate_ui(
+                                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.label(type_str);
+                                },
+                            );
+                            ui.end_row();
+
+                            // Size field
+                            ui.weak("Size:");
+                            let formatted_size = prettier_bytes::ByteFormatter::new()
+                                .format(node.size)
+                                .to_string();
+                            ui.allocate_ui(
+                                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.label(formatted_size);
+                                },
+                            );
+                            ui.end_row();
+
+                            // Bytes field
+                            ui.weak("Bytes:");
+                            ui.allocate_ui(
+                                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.label(format_with_commas(node.size));
+                                },
+                            );
+                            ui.end_row();
+
+                            // Items
+                            ui.weak("Items:");
+                            ui.allocate_ui(
+                                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    if is_dir {
+                                        ui.label(format!("{items_count}"));
+                                    } else {
+                                        ui.label("-");
+                                    }
+                                },
+                            );
+                            ui.end_row();
+
+                            // Files
+                            ui.weak("Files:");
+                            ui.allocate_ui(
+                                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    if is_dir {
+                                        ui.label(format!("{files_count}"));
+                                    } else {
+                                        ui.label("-");
+                                    }
+                                },
+                            );
+                            ui.end_row();
+
+                            // Subdirs
+                            ui.weak("Subdirs:");
+                            ui.allocate_ui(
+                                egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    if is_dir {
+                                        ui.label(format!("{subdirs_count}"));
+                                    } else {
+                                        ui.label("-");
+                                    }
+                                },
+                            );
+                            ui.end_row();
+
+                            // Unix-only details (User, Group, Permissions)
+                            #[cfg(unix)]
+                            {
+                                let full_path = snapshot.get_full_path(node_idx);
+                                if let Some((user, group, perm)) = get_unix_metadata(&full_path) {
+                                    ui.weak("User:");
+                                    ui.allocate_ui(
+                                        egui::vec2(
+                                            ui.available_width(),
+                                            ui.spacing().interact_size.y,
+                                        ),
+                                        |ui| {
+                                            ui.set_min_width(ui.available_width());
+                                            ui.label(user);
+                                        },
+                                    );
+                                    ui.end_row();
+
+                                    ui.weak("Group:");
+                                    ui.allocate_ui(
+                                        egui::vec2(
+                                            ui.available_width(),
+                                            ui.spacing().interact_size.y,
+                                        ),
+                                        |ui| {
+                                            ui.set_min_width(ui.available_width());
+                                            ui.label(group);
+                                        },
+                                    );
+                                    ui.end_row();
+
+                                    ui.weak("Permissions:");
+                                    ui.allocate_ui(
+                                        egui::vec2(
+                                            ui.available_width(),
+                                            ui.spacing().interact_size.y,
+                                        ),
+                                        |ui| {
+                                            ui.set_min_width(ui.available_width());
+                                            ui.label(perm);
+                                        },
+                                    );
+                                    ui.end_row();
+                                }
+                            }
+                        });
+
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    // Actions
+                    ui.strong("Actions");
+                    ui.add_space(4.0);
+
+                    // Full Path display and copy
+                    ui.weak("Full Path:");
+                    let full_path = snapshot.get_full_path(node_idx);
+                    ui.horizontal(|ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        ui.label(
+                            egui::RichText::new(&full_path)
+                                .monospace()
+                                .weak()
+                                .size(10.0),
+                        );
+                    });
+                    ui.add_space(4.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button("📋 Copy Path").clicked() {
+                            ui.ctx().copy_text(full_path.clone());
+                        }
+                        if ui.button("🗁 Open Manager").clicked() {
+                            let path = std::path::Path::new(&full_path);
+                            let dir_to_open = if path.is_dir() {
+                                path
+                            } else {
+                                path.parent().map_or(path, |p| p)
+                            };
+                            let _ = open::that(dir_to_open);
+                        }
+                    });
+
+                    ui.add_space(12.0);
+
+                    // File operations
+                    ui.weak("Operations:");
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        let is_dir_selected = is_dir
+                            && !self
+                                .shared_state
+                                .is_scanning
+                                .load(std::sync::atomic::Ordering::SeqCst);
+                        if ui
+                            .add_enabled(is_dir_selected, egui::Button::new("🔄 Refresh Subtree"))
+                            .clicked()
+                        {
+                            self.refresh_directory_subtree(node_idx);
+                        }
+                        ui.add_space(4.0);
+
+                        if ui.button("♻ Move to Trash").clicked() {
+                            self.active_modal = Some(ActiveModal::Trash);
+                            self.delete_confirm_checked = false;
+                            self.delete_node_idx = Some(node_idx);
+                        }
+                        ui.add_space(4.0);
+
+                        if ui.button("🗑 Delete Permanently").clicked() {
+                            self.active_modal = Some(ActiveModal::Delete);
+                            self.delete_confirm_checked = false;
+                            self.delete_node_idx = Some(node_idx);
+                        }
+                    });
+                });
+            });
+        });
+    }
+}
+
+#[cfg(unix)]
+fn get_unix_metadata(path_str: &str) -> Option<(String, String, String)> {
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::symlink_metadata(path_str).ok()?;
+    let uid = metadata.uid();
+    let gid = metadata.gid();
+    let mode = metadata.mode();
+
+    let user = std::process::Command::new("id")
+        .args(["-nu", &uid.to_string()])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| uid.to_string());
+
+    let group = std::process::Command::new("getent")
+        .args(["group", &gid.to_string()])
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                let s = String::from_utf8_lossy(&o.stdout);
+                s.split(':').next().map(|name| name.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| gid.to_string());
+
+    let file_type_char = if metadata.is_dir() {
+        'd'
+    } else if metadata.file_type().is_symlink() {
+        'l'
+    } else {
+        '-'
+    };
+
+    let rwx = |val: u32| {
+        let r = if val & 4 != 0 { 'r' } else { '-' };
+        let w = if val & 2 != 0 { 'w' } else { '-' };
+        let x = if val & 1 != 0 { 'x' } else { '-' };
+        format!("{r}{w}{x}")
+    };
+
+    let u_perm = rwx((mode >> 6) & 7);
+    let g_perm = rwx((mode >> 3) & 7);
+    let o_perm = rwx(mode & 7);
+    let perm_str = format!("{file_type_char}{u_perm}{g_perm}{o_perm}");
+
+    Some((user, group, perm_str))
+}
+
+fn format_with_commas(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    let len = s.len();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result
+}
+
+fn paint_gradient_rect(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    left_color: egui::Color32,
+    right_color: egui::Color32,
+) {
+    let mut mesh = egui::Mesh::default();
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: rect.left_top(),
+        uv: egui::epaint::WHITE_UV,
+        color: left_color,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: rect.right_top(),
+        uv: egui::epaint::WHITE_UV,
+        color: right_color,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: rect.right_bottom(),
+        uv: egui::epaint::WHITE_UV,
+        color: right_color,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: rect.left_bottom(),
+        uv: egui::epaint::WHITE_UV,
+        color: left_color,
+    });
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(mesh);
 }

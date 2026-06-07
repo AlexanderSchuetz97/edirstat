@@ -66,7 +66,7 @@ impl StatComponent for TreemapChart {
     ) {
         let available_rect = ui.available_rect_before_wrap();
         let (rect, response) = ui.allocate_exact_size(
-            eframe::egui::vec2(available_rect.width(), available_rect.height() - 20.0),
+            eframe::egui::vec2(available_rect.width() - 4.0, available_rect.height()),
             eframe::egui::Sense::click_and_drag(),
         );
 
