@@ -236,11 +236,11 @@ fn calculate_hash_at_range(
     let mut file = File::open(path).ok()?;
     file.seek(SeekFrom::Start(start_offset)).ok()?;
 
-    let mut buffer = vec![0u8; len];
-    let n = file.read(&mut buffer).ok()?;
-    buffer.truncate(n);
+    let mut buffer = [0u8; HASH_BLOCK_SIZE];
+    let read_len = len.min(HASH_BLOCK_SIZE);
+    let n = file.read(&mut buffer[..read_len]).ok()?;
 
-    let hash = blake3::hash(&buffer);
+    let hash = blake3::hash(&buffer[..n]);
     Some(hash.into())
 }
 
@@ -306,7 +306,7 @@ fn calculate_full_hash(
 
     let mut file = File::open(path).ok()?;
     let mut hasher = blake3::Hasher::new();
-    let mut buffer = vec![0u8; 64 * 1024]; // 64KB chunk buffer
+    let mut buffer = [0u8; 16384]; // 16KB stack buffer
 
     loop {
         let n = file.read(&mut buffer).ok()?;
