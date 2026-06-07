@@ -73,6 +73,7 @@ impl QueryCoordinator {
             };
 
             // Single-pass O(N) reverse propagation of matched subtrees
+            let search_query_lower = search_query.to_lowercase();
             for idx in (0..snapshot.nodes.len()).rev() {
                 let node = &snapshot.nodes[idx];
                 let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
@@ -82,7 +83,7 @@ impl QueryCoordinator {
                         if filter_case_sensitive {
                             name.contains(search_query)
                         } else {
-                            name.to_lowercase().contains(&search_query.to_lowercase())
+                            contains_case_insensitive(name, &search_query_lower)
                         }
                     },
                     |re| re.is_match(name),
@@ -1396,4 +1397,24 @@ fn paint_gradient_rect(
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     painter.add(mesh);
+}
+
+fn contains_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() && needle_lower.is_ascii() {
+        haystack
+            .as_bytes()
+            .windows(needle_lower.len())
+            .any(|window| {
+                window
+                    .iter()
+                    .zip(needle_lower.bytes())
+                    .all(|(&h, n)| h.to_ascii_lowercase() == n)
+            })
+    } else {
+        // Fallback for non-ASCII paths
+        haystack.to_lowercase().contains(needle_lower)
+    }
 }
