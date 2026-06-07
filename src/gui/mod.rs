@@ -1007,7 +1007,10 @@ impl GuiApp {
                     // 6. Move to Trash
                     let ops_enabled = !self.selected_nodes.is_empty() && !is_scanning;
                     if ui
-                        .add_enabled(ops_enabled, egui::Button::new("♻"))
+                        .add_enabled(
+                            ops_enabled,
+                            egui::Button::new(egui::RichText::new("♻").size(18.0)),
+                        )
                         .on_hover_text("Move Selected to Trash")
                         .clicked()
                     {
