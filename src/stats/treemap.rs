@@ -4,6 +4,8 @@ use smallvec::SmallVec;
 use super::{StatComponent, StatContext, StatsChart};
 use crate::arena::{FileNode, NO_INDEX, StringPool};
 
+const TRUNCATE_DEPTH: usize = 30000;
+
 pub struct TreemapBlock {
     pub rect: Rect,
     pub node_idx: u32,
@@ -49,6 +51,11 @@ impl StatsChart for TreemapChart {
         };
 
         build_treemap(&config, 0, self.last_rect, 0, &mut blocks);
+
+        // Enforce safe memory boundary to protect the GPU staging buffer limits
+        if blocks.len() > TRUNCATE_DEPTH {
+            blocks.truncate(TRUNCATE_DEPTH);
+        }
         blocks
     }
 }
@@ -105,6 +112,12 @@ impl StatComponent for TreemapChart {
                 };
                 build_treemap(&config, 0, rect, 0, &mut blocks);
             }
+
+            // Safety cap to prevent GPU staging buffer overflows on massive directories
+            if blocks.len() > TRUNCATE_DEPTH {
+                blocks.truncate(TRUNCATE_DEPTH);
+            }
+
             self.cached_blocks = blocks;
             self.last_snapshot_ptr = snapshot_ptr;
             self.last_rect = rect;
