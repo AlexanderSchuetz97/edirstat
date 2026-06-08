@@ -19,6 +19,7 @@ keywords = ["disk-usage", "treemap", "egui", "dirstat", "zero-copy"]
 exclude = ["docs/videos/*", "*.mp4"]
 
 [dependencies]
+ahash = "0.8.12"
 arc-swap = "1.9.1"
 atomic-progress = { version = "0.1.5", default-features = false, features = [
     "prettier-bytes",

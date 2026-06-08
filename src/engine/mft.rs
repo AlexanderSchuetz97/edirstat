@@ -219,11 +219,9 @@ fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
             0x30 if !attr.is_non_resident && attr.payload.len() >= 24 => {
                 // Resident FileName Attribute
                 let val_offset =
-                    u16::from_le_bytes(attr.payload[20..22].try_into().unwrap_or([0; 2]))
-                        as usize;
+                    u16::from_le_bytes(attr.payload[20..22].try_into().unwrap_or([0; 2])) as usize;
                 let val_len =
-                    u32::from_le_bytes(attr.payload[16..20].try_into().unwrap_or([0; 4]))
-                        as usize;
+                    u32::from_le_bytes(attr.payload[16..20].try_into().unwrap_or([0; 4])) as usize;
                 if val_offset + val_len <= attr.payload.len() && val_len >= 66 {
                     let val = &attr.payload[val_offset..val_offset + val_len];
                     let parent_ref = u64::from_le_bytes(val[0..8].try_into().unwrap_or([0; 8]))
@@ -321,7 +319,7 @@ fn reconstruct_path(
 /// Sweeps the in-memory tree starting from the Root record to locate the target directory.
 fn find_target_record_in_memory(
     mft_entries: &[Option<MftEntry>],
-    children_map: &HashMap<u64, Vec<u64>>,
+    children_map: &HashMap<u64, Vec<u64>, ahash::RandomState>,
     root_path: &Path,
 ) -> u64 {
     let mut current_record = 5u64; // Root folder constant
@@ -433,8 +431,8 @@ pub fn try_scan_mft(
     let mut mft_entries: Vec<Option<MftEntry>> = Vec::new();
     mft_entries.resize_with(max_records as usize, || None);
 
-    let mut children_map: HashMap<u64, Vec<u64>> =
-        HashMap::with_capacity(max_records as usize / 10);
+    let mut children_map: HashMap<u64, Vec<u64>, ahash::RandomState> =
+        HashMap::with_capacity_and_hasher(max_records as usize / 10, ahash::RandomState::new());
 
     // Allocate a large reusable staging buffer for chunked ingestion
     let mut run_buffer = vec![0u8; CHUNK_SIZE];

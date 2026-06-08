@@ -8,7 +8,7 @@ pub struct DirCompositionChart {
     pub parent_idx: u32,
     pub top_extensions: Vec<String>,
     // Holds (child_name, child_extension_map, total_bytes) for the top 8 children
-    pub children_composition: Vec<(String, HashMap<String, u64>, u64)>,
+    pub children_composition: Vec<(String, HashMap<String, u64, ahash::RandomState>, u64)>,
     pub last_snapshot_ptr: usize,
 }
 
@@ -79,7 +79,7 @@ impl super::StatsChart for DirCompositionChart {
                 .unwrap_or("unknown")
                 .to_string();
 
-            let mut ext_map = HashMap::new();
+            let mut ext_map = HashMap::with_hasher(ahash::RandomState::new());
             if child_node.is_directory() {
                 // Recursively gather file extension profiles of the subdirectory
                 gather_dir_extensions(
@@ -287,11 +287,11 @@ impl super::StatComponent for DirCompositionChart {
 
 /// Accumulates file sizes of a directory subtree in a safe, stack-based non-recursive layout,
 /// capped at 20,000 files to guarantee lightning-fast visual updates.
-pub fn gather_dir_extensions<S: ::std::hash::BuildHasher>(
+pub fn gather_dir_extensions(
     nodes: &[FileNode],
     string_pool: &StringPool,
     start_idx: u32,
-    ext_sizes: &mut HashMap<String, u64, S>,
+    ext_sizes: &mut HashMap<String, u64, ahash::RandomState>,
 ) {
     let mut stack = vec![start_idx];
     let mut visited_count = 0;

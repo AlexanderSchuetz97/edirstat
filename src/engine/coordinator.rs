@@ -65,8 +65,8 @@ impl Coordinator {
         let mut string_pool = StringPool::new();
 
         // Local extension tracking in the background thread
-        let mut ext_map: std::collections::HashMap<String, (u64, u32)> =
-            std::collections::HashMap::new();
+        let mut ext_map: std::collections::HashMap<String, (u64, u32), ahash::RandomState> =
+            std::collections::HashMap::with_hasher(ahash::RandomState::new());
 
         // Local to Global ID mapping: outer index is worker_id, inner is local_id.0
         let mut id_map: Vec<Vec<u32>> = Vec::new();

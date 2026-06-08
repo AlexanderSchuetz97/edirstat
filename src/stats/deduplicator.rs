@@ -353,7 +353,8 @@ pub fn run_deduplication(
     progress.set_pos(0);
 
     let mut expected_timestamps = HashMap::new();
-    let mut size_groups: HashMap<u64, Vec<u32>> = HashMap::new();
+    let mut size_groups: HashMap<u64, Vec<u32>, ahash::RandomState> =
+        HashMap::with_capacity_and_hasher(8, ahash::RandomState::new());
 
     for (idx, node) in snapshot.nodes.iter().enumerate() {
         if is_cancelled() {
@@ -431,7 +432,8 @@ pub fn run_deduplication(
                 }
 
                 let mut local_groups = Vec::new();
-                let mut hash_subgroups: HashMap<[u8; 32], Vec<u32>> = HashMap::new();
+                let mut hash_subgroups: HashMap<[u8; 32], Vec<u32>, ahash::RandomState> =
+                    HashMap::with_capacity_and_hasher(8, ahash::RandomState::new());
                 let mut failed_or_skipped = Vec::new();
 
                 for &node_idx in &group.nodes {

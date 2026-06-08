@@ -1051,6 +1051,7 @@ dependencies = [
 name = "edirstat"
 version = "1.1.0"
 dependencies = [
+ "ahash",
  "arc-swap",
  "atomic-progress",
  "blake3",
