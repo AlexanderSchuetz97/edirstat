@@ -24,6 +24,8 @@ pub struct ScanTask {
     pub parent_id: LocalId,
     pub worker_id: u8,
     pub ancestors: smallvec::SmallVec<[(u64, u64); 16]>,
+    /// The device/volume identifier to restrict traversal within.
+    pub expected_device_id: Option<u64>,
 }
 
 pub enum ScanEvent {
@@ -108,6 +110,25 @@ impl TraversalEngine {
         let stats = self.stats.clone();
 
         let handle = thread::spawn(move || {
+            // Attempt raw MFT parsing on Windows only if partition is explicitly detected as NTFS
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(fs_type) = super::mft::get_fs_type(&root_path)
+                    && fs_type.eq_ignore_ascii_case("NTFS")
+                {
+                    match super::mft::try_scan_mft(&root_path, &event_tx, &stats) {
+                        Ok(()) => {
+                            // Raw scan was executed successfully, end thread execution
+                            return;
+                        }
+                        Err(_) => {
+                            // Bypassed or failed raw access; fallback continues to parallel walker
+                            stats.reset();
+                        }
+                    }
+                }
+            }
+
             // Setup global injector for starting and overflow tasks
             let injector = Arc::new(Injector::new());
 
@@ -115,12 +136,14 @@ impl TraversalEngine {
             let root_id = (0, 0); // Placeholder for root
             let root_metadata = fs::metadata(&root_path);
             let root_file_id = root_metadata.as_ref().map_or(root_id, get_file_id);
+            let expected_device_id = root_metadata.as_ref().map(get_device_id).ok();
 
             let initial_task = ScanTask {
                 path: root_path.clone(),
                 parent_id: LocalId(0),
                 worker_id: 0,
                 ancestors: smallvec::smallvec![root_file_id],
+                expected_device_id,
             };
             injector.push(initial_task);
 
@@ -276,6 +299,15 @@ fn scan_directory<F>(
 
         // Check if directory
         if meta.is_dir {
+            // Mount Point / Device boundary safety protection check (using nested let-chains)
+            if let Some(expected_dev) = task.expected_device_id
+                && meta.file_id != (0, 0)
+                && meta.file_id.0 != expected_dev
+            {
+                // Do not descend into subdirectories across filesystem boundaries (e.g. /sys or /proc)
+                continue;
+            }
+
             // Cycle Detection
             if meta.file_id != (0, 0) && task.ancestors.contains(&meta.file_id) {
                 continue;
@@ -312,6 +344,7 @@ fn scan_directory<F>(
                 parent_id: child_local_id,
                 worker_id,
                 ancestors: new_ancestors,
+                expected_device_id: task.expected_device_id,
             };
             local_worker.push(new_task);
         } else {
@@ -363,6 +396,7 @@ pub fn get_file_id(meta: &fs::Metadata) -> (u64, u64) {
 }
 
 #[cfg(windows)]
+#[must_use]
 pub fn get_file_id(meta: &fs::Metadata) -> (u64, u64) {
     use std::os::windows::fs::MetadataExt;
     (
@@ -372,8 +406,26 @@ pub fn get_file_id(meta: &fs::Metadata) -> (u64, u64) {
 }
 
 #[cfg(not(any(unix, windows)))]
+#[must_use]
 pub fn get_file_id(_meta: &fs::Metadata) -> (u64, u64) {
     (0, 0)
+}
+
+#[cfg(unix)]
+fn get_device_id(meta: &fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.dev()
+}
+
+#[cfg(windows)]
+fn get_device_id(meta: &fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    meta.volume_serial_number().unwrap_or(0) as u64
+}
+
+#[cfg(not(any(unix, windows)))]
+fn get_device_id(_meta: &fs::Metadata) -> u64 {
+    0
 }
 
 #[cfg(test)]

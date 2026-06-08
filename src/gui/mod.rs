@@ -1351,7 +1351,7 @@ fn open_terminal_at(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(&["/c", "start", "cmd"])
+            .args(["/c", "start", "cmd"])
             .current_dir(path)
             .spawn()?;
         Ok(())

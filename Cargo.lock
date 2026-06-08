@@ -1071,6 +1071,7 @@ dependencies = [
  "smallvec",
  "thiserror 2.0.18",
  "trash",
+ "windows 0.62.2",
  "winresource",
 ]
 
