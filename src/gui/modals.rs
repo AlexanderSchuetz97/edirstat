@@ -1067,14 +1067,16 @@ impl GuiApp {
         }
     }
 
-    pub(crate) fn refresh_directory_subtree(&self, dir_idx: u32) {
+    pub(crate) fn refresh_directory_subtree(&mut self, dir_idx: u32) {
         self.refresh_directory_subtrees(&[dir_idx]);
     }
 
-    pub(crate) fn refresh_directory_subtrees(&self, dir_indices: &[u32]) {
+    pub(crate) fn refresh_directory_subtrees(&mut self, dir_indices: &[u32]) {
         if dir_indices.is_empty() {
             return;
         }
+        self.scan_start_time = Some(std::time::Instant::now());
+        self.total_scan_duration = None;
         let current_snap = self.shared_state.current_snapshot.load();
         let mut valid_indices = Vec::new();
         for &idx in dir_indices {

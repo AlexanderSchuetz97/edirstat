@@ -203,6 +203,8 @@ impl GuiApp {
         self.selected_duplicates.clear();
         self.delete_duplicates_indices.clear();
         self.deduplicator_dir_filter.clear();
+        self.scan_start_time = None;
+        self.total_scan_duration = None;
         self.deduplicator_cancel
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.deduplicator_progress = atomic_progress::Progress::new_spinner("Deduplicator");
@@ -618,6 +620,11 @@ impl eframe::App for GuiApp {
         let snapshot = self.shared_state.current_snapshot.load();
         let is_scanning = self.shared_state.is_scanning.load(Ordering::SeqCst);
 
+        if !is_scanning && let Some(start) = self.scan_start_time {
+            self.total_scan_duration = Some(start.elapsed());
+            self.scan_start_time = None;
+        }
+
         // Repaint during scan to show live progress, or continuously while selected to drive the glow animation
         if is_scanning {
             ctx.request_repaint_after(Duration::from_millis(50));
@@ -818,6 +825,20 @@ impl eframe::App for GuiApp {
                     ui.separator();
                     ui.label(format!("⏱ Time: {:.1}s", elapsed.as_secs_f64()));
                     ui.separator();
+                    ui.label(format!(
+                        "⚡ Speed: {}/s",
+                        prettier_bytes::ByteFormatter::new().format(speed as u64)
+                    ));
+                } else if !is_scanning && let Some(duration) = self.total_scan_duration {
+                    ui.separator();
+                    ui.label(format!("⏱ Time: {:.1}s", duration.as_secs_f64()));
+                    ui.separator();
+                    #[allow(clippy::cast_precision_loss)]
+                    let speed = if duration.as_secs_f64() > 0.0 {
+                        bytes as f64 / duration.as_secs_f64()
+                    } else {
+                        0.0
+                    };
                     ui.label(format!(
                         "⚡ Speed: {}/s",
                         prettier_bytes::ByteFormatter::new().format(speed as u64)
