@@ -277,7 +277,7 @@ fn scan_directory<F>(
         // Check if directory
         if meta.is_dir {
             // Cycle Detection
-            if task.ancestors.contains(&meta.file_id) {
+            if meta.file_id != (0, 0) && task.ancestors.contains(&meta.file_id) {
                 continue;
             }
 
@@ -303,7 +303,9 @@ fn scan_directory<F>(
 
             // Create a new task and push to local queue
             let mut new_ancestors = task.ancestors.clone();
-            new_ancestors.push(meta.file_id);
+            if meta.file_id != (0, 0) {
+                new_ancestors.push(meta.file_id);
+            }
 
             let new_task = ScanTask {
                 path: entry.path(),
