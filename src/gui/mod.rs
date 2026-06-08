@@ -399,7 +399,40 @@ impl GuiApp {
 
         ui.separator();
 
-        // 5. Move to Trash
+        // 5. Copy Name
+        let copy_enabled = !self.selected_nodes.is_empty();
+        let copy_name_btn = ui.add_enabled(copy_enabled, egui::Button::new("📋 Copy Name"));
+        if copy_name_btn.clicked() {
+            let mut names = Vec::new();
+            let mut selected: Vec<u32> = self.selected_nodes.iter().copied().collect();
+            selected.sort_unstable();
+            for idx in selected {
+                if idx < snapshot.nodes.len() as u32 {
+                    let node = &snapshot.nodes[idx as usize];
+                    let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+                    names.push(name.to_string());
+                }
+            }
+            ui.ctx().copy_text(names.join("\n"));
+            ui.close_kind(egui::UiKind::Menu);
+        }
+
+        // 6. Copy Path
+        let copy_path_btn = ui.add_enabled(copy_enabled, egui::Button::new("📎 Copy Path"));
+        if copy_path_btn.clicked() {
+            let mut paths = Vec::new();
+            let mut selected: Vec<u32> = self.selected_nodes.iter().copied().collect();
+            selected.sort_unstable();
+            for idx in selected {
+                paths.push(snapshot.get_full_path(idx));
+            }
+            ui.ctx().copy_text(paths.join("\n"));
+            ui.close_kind(egui::UiKind::Menu);
+        }
+
+        ui.separator();
+
+        // 7. Move to Trash
         let trash_btn = ui.add_enabled(
             has_selection && !is_scanning,
             egui::Button::new("♻ Move to Trash"),
@@ -411,7 +444,7 @@ impl GuiApp {
             ui.close_kind(egui::UiKind::Menu); // Closes the active menu/context-menu
         }
 
-        // 6. Permanently Delete
+        // 8. Permanently Delete
         let delete_btn = ui.add_enabled(
             has_selection && !is_scanning,
             egui::Button::new("🗑 Permanently Delete"),
@@ -1215,10 +1248,48 @@ impl GuiApp {
                         let _ = open::that(dir_to_open);
                     }
 
-                    // Separator between Open Tools and Deletion Tools
+                    // Separator between Open Tools and Copy Tools
                     ui.separator();
 
-                    // 6. Move to Trash
+                    // Copy Name
+                    let copy_enabled = !self.selected_nodes.is_empty();
+                    if ui
+                        .add_enabled(copy_enabled, egui::Button::new("📋"))
+                        .on_hover_text("Copy Name")
+                        .clicked()
+                    {
+                        let mut names = Vec::new();
+                        let mut selected: Vec<u32> = self.selected_nodes.iter().copied().collect();
+                        selected.sort_unstable();
+                        for idx in selected {
+                            if idx < snapshot.nodes.len() as u32 {
+                                let node = &snapshot.nodes[idx as usize];
+                                let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+                                names.push(name.to_string());
+                            }
+                        }
+                        ui.ctx().copy_text(names.join("\n"));
+                    }
+
+                    // Copy Path
+                    if ui
+                        .add_enabled(copy_enabled, egui::Button::new("📎"))
+                        .on_hover_text("Copy Path")
+                        .clicked()
+                    {
+                        let mut paths = Vec::new();
+                        let mut selected: Vec<u32> = self.selected_nodes.iter().copied().collect();
+                        selected.sort_unstable();
+                        for idx in selected {
+                            paths.push(snapshot.get_full_path(idx));
+                        }
+                        ui.ctx().copy_text(paths.join("\n"));
+                    }
+
+                    // Separator between Copy Tools and Deletion Tools
+                    ui.separator();
+
+                    // 8. Move to Trash
                     let ops_enabled = !self.selected_nodes.is_empty() && !is_scanning;
                     if ui
                         .add_enabled(
@@ -1233,7 +1304,7 @@ impl GuiApp {
                         self.delete_node_indices = self.selected_nodes.iter().copied().collect();
                     }
 
-                    // 7. Delete Permanently
+                    // 9. Delete Permanently
                     if ui
                         .add_enabled(ops_enabled, egui::Button::new("🗑"))
                         .on_hover_text("Delete Selected Permanently")
