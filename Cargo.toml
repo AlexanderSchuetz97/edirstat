@@ -48,3 +48,8 @@ winresource = "0.1.31"
 [[bin]]
 name = "edirstat"
 path = "src/bin/edirstat.rs"
+
+[[bench]]
+name = "compare"
+harness = false
+path = "benches/compare.rs"

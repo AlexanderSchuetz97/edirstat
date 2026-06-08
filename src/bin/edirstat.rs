@@ -35,10 +35,65 @@ use edirstat::{coordinator::SharedState, gui::GuiApp, traversal::TraversalEngine
 struct Args {
     /// Directory to scan or snapshot file to load
     path: Option<PathBuf>,
+
+    /// Run in headless benchmark mode to measure scan time on the target directory and exit
+    #[arg(long)]
+    benchmark: bool,
+}
+
+fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let path = path_opt.ok_or("Error: A path must be provided for benchmarking.")?;
+    if !path.exists() {
+        return Err(format!("Error: Path does not exist: {}", path.display()).into());
+    }
+    let path = std::fs::canonicalize(&path)?;
+    if !path.is_dir() {
+        return Err(format!("Error: Path is not a directory: {}", path.display()).into());
+    }
+
+    println!("Running edirstat benchmark on: {}", path.display());
+
+    let shared_state = Arc::new(SharedState::new());
+    let traversal_engine = Arc::new(TraversalEngine::new());
+    let (tx, rx) = crossbeam::channel::unbounded();
+
+    let start = std::time::Instant::now();
+    let handle = traversal_engine.start_traversal(path.clone(), tx)?;
+
+    let mut coordinator = edirstat::coordinator::Coordinator::new(rx, shared_state);
+    coordinator.run_coordinator_loop(&path.to_string_lossy());
+
+    let _ = handle.join();
+    let duration = start.elapsed();
+
+    let stats = traversal_engine.stats();
+    let files = stats
+        .files_scanned
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let dirs = stats.dirs_scanned.load(std::sync::atomic::Ordering::SeqCst);
+    let bytes = stats
+        .bytes_scanned
+        .load(std::sync::atomic::Ordering::SeqCst);
+
+    println!("----------------------------------------");
+    println!("Time elapsed: {duration:?}");
+    println!("Directories scanned: {dirs}");
+    println!("Files scanned: {files}");
+    println!("Total bytes: {bytes}");
+    println!("----------------------------------------");
+    Ok(())
 }
 
 fn main() -> eframe::Result {
     let args = Args::parse();
+
+    if args.benchmark {
+        if let Err(e) = run_benchmark(args.path) {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
 
     // Create system states
     let shared_state = Arc::new(SharedState::new());
