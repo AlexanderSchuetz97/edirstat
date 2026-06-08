@@ -285,6 +285,7 @@ impl StatComponent for TreemapChart {
                 eframe::egui::PopupAnchor::Pointer,
             )
             .show(|ui| {
+                ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Extend);
                 ui.label(format!("📁 {path_str}"));
                 ui.label(format!("💾 Size: {size_str}"));
             });

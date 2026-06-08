@@ -197,6 +197,7 @@ impl super::StatComponent for FileAgeSizeScatterChart {
                         eframe::egui::PopupAnchor::Pointer,
                     )
                     .show(|ui| {
+                        ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Extend);
                         ui.label(format!("📄 Path: {path_str}"));
                         ui.label(format!("💾 Size: {size_str}"));
                         ui.label(format!("⏳ Age: {age_days} days unmodified"));
