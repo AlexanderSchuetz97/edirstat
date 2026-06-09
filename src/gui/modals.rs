@@ -759,7 +759,7 @@ impl GuiApp {
                                     ui.add_space(8.0);
 
                                     ui.horizontal(|ui| {
-                                        ui.weak("Details: ");
+                                        ui.label("Details: ");
                                         ui.label(egui::RichText::new(&cfg.info_msg).strong());
                                     });
 
@@ -771,7 +771,7 @@ impl GuiApp {
                                     ui.horizontal(|ui| {
                                         ui.colored_label(cfg.warning_color, "⚠");
                                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                        ui.label(egui::RichText::new(cfg.warning_msg).weak());
+                                        ui.label(egui::RichText::new(cfg.warning_msg));
                                     });
 
                                     ui.add_space(12.0);
