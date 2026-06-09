@@ -123,6 +123,7 @@ pub struct GuiApp {
 
     pub(crate) highlight_duplicates: bool,
     pub(crate) hovered_node_idx: Option<u32>,
+    pub(crate) last_rendered_snapshot_ptr: usize,
 }
 
 impl GuiApp {
@@ -217,6 +218,7 @@ impl GuiApp {
 
             highlight_duplicates: false,
             hovered_node_idx: None,
+            last_rendered_snapshot_ptr: 0,
         };
 
         if let Some(path) = initial_path {
@@ -270,6 +272,7 @@ impl GuiApp {
         self.duplicate_waste_chart = stats::duplicate_waste::DuplicateWasteChart::default();
 
         self.scroll_to_selected = false;
+        self.last_rendered_snapshot_ptr = 0;
     }
 
     pub(crate) fn start_scan(&mut self, path: PathBuf) {
@@ -563,6 +566,12 @@ impl eframe::App for GuiApp {
         // Fetch current snapshot
         let snapshot = self.shared_state.current_snapshot.load();
         let is_scanning = self.shared_state.is_scanning.load(Ordering::SeqCst);
+        let snapshot_ptr = std::sync::Arc::as_ptr(&snapshot.nodes) as usize;
+
+        if self.last_rendered_snapshot_ptr != snapshot_ptr {
+            self.table_state.filter_cache_dirty = true;
+            self.last_rendered_snapshot_ptr = snapshot_ptr;
+        }
 
         // --- Handle Table commands sent from standard and context-menu operations ---
         while let Ok(command) = self.command_rx.try_recv() {

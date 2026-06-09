@@ -1153,7 +1153,7 @@ impl GuiApp {
                     cloned_nodes[idx].file_count = 0;
                     cloned_nodes[idx].first_child = crate::arena::NO_INDEX;
                     cloned_nodes[idx].next_sibling = crate::arena::NO_INDEX;
-                    cloned_nodes[idx].parent = crate::arena::NO_INDEX;
+                    // Do NOT set parent to NO_INDEX to avoid them being treated as ghost root nodes
                 }
 
                 cloned_nodes[dir_idx as usize].first_child = crate::arena::NO_INDEX;
