@@ -121,6 +121,9 @@ pub struct GuiApp {
     pub(crate) delete_duplicates_indices: Vec<u32>,
     pub(crate) deduplicator_dir_filter: String,
 
+    // Defer initial CLI scan to the first render frame
+    pub(crate) pending_initial_path: Option<PathBuf>,
+
     pub(crate) highlight_duplicates: bool,
     pub(crate) hovered_node_idx: Option<u32>,
     pub(crate) last_rendered_snapshot_ptr: usize,
@@ -175,7 +178,12 @@ impl GuiApp {
                 Box::new(crate::gui::operations::DeleteSelectedOp::new(command_tx)),
             ]);
 
-        let mut app = Self {
+        #[cfg(not(test))]
+        let pending_initial_path = initial_path;
+        #[cfg(test)]
+        let pending_initial_path = None;
+
+        let app = Self {
             shared_state,
             traversal_engine,
             table_state: egui_table_kit::state::TableState::new("edirstat_hierarchical_table", 0),
@@ -220,11 +228,18 @@ impl GuiApp {
             delete_duplicates_indices: Vec::new(),
             deduplicator_dir_filter: String::new(),
 
+            pending_initial_path,
+
             highlight_duplicates: false,
             hovered_node_idx: None,
             last_rendered_snapshot_ptr: 0,
         };
 
+        #[cfg(test)]
+        let mut app = app;
+
+        // Immediate execution for unit tests only
+        #[cfg(test)]
         if let Some(path) = initial_path {
             if path.exists() {
                 if path.is_dir() {
@@ -558,6 +573,21 @@ impl eframe::App for GuiApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // Process any deferred command line paths on the first draw pass
+        if let Some(path) = self.pending_initial_path.take() {
+            if path.exists() {
+                if path.is_dir() {
+                    self.start_scan(path);
+                } else if path.is_file()
+                    && let Err(e) = self.load_snapshot_file(path.clone())
+                {
+                    eprintln!("Error loading snapshot file {}: {e}", path.display());
+                }
+            } else {
+                eprintln!("Error: Path does not exist: {}", path.display());
+            }
+        }
 
         // Handle keyboard shortcuts
         if self.layout_mode == LayoutMode::Classic && ctx.input(|i| i.key_pressed(egui::Key::F9)) {
