@@ -718,7 +718,7 @@ impl GuiApp {
             self.table_state.expanded_rows.insert(0);
         }
 
-        // Sync global self.search_query to TableState's Column 0 (Name) filter search text!
+        // Sync global self.search_query to TableState's Column 0 (Name) filter search text
         if self.table_state.columns.len() < 8 {
             self.table_state
                 .columns
@@ -740,465 +740,473 @@ impl GuiApp {
             self.table_state.filter_cache_dirty = true; // Mark cache dirty to trigger a rebuild
         }
 
-        let modifiers = ui.input(|i| i.modifiers);
         let row_height = 24.0;
         let available_height = ui.available_height();
-        let visuals = ui.visuals().clone();
-
-        let mut next_hovered = None;
 
         let provider = TableProviderWrapper::new(snapshot);
 
         // 1. Delegate tree flattening, sorting, and search-matching exclusively to egui-table-kit (O(1) after first frame)
         self.table_state.flatten_tree(&provider);
 
-        let mut builder = egui_extras::TableBuilder::new(ui)
-            .id_salt("hierarchical_file_table")
-            .sense(egui::Sense::click())
-            .striped(true)
-            .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(egui_extras::Column::initial(320.0).clip(true)) // Name
-            .column(egui_extras::Column::initial(140.0).range(80.0..=400.0)) // Percentage
-            .column(egui_extras::Column::initial(90.0).range(60.0..=200.0)) // Size
-            .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Items
-            .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Files
-            .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Subdirs
-            .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Created
-            .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Last Modified
-            .min_scrolled_height(0.0)
-            .max_scroll_height(available_height);
+        let modifiers = ui.input(|i| i.modifiers);
+        let visuals = ui.visuals().clone();
 
-        // 2. Programmatic Center Scrolling on TableBuilder
-        if self.scroll_to_selected {
-            if let Some(selected_idx) = self.selected_node_idx
-                && let Some(row_index) = self
-                    .table_state
-                    .active_rows
-                    .iter()
-                    .position(|&node_idx| node_idx == selected_idx as usize)
-            {
-                builder = builder.scroll_to_row(row_index, Some(egui::Align::Center));
-            }
-            self.scroll_to_selected = false;
-        }
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let mut builder = egui_extras::TableBuilder::new(ui)
+                    .id_salt("hierarchical_file_table")
+                    .sense(egui::Sense::click())
+                    .striped(true)
+                    .resizable(true)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(egui_extras::Column::initial(320.0).clip(true)) // Name
+                    .column(egui_extras::Column::initial(140.0).range(80.0..=400.0)) // Percentage
+                    .column(egui_extras::Column::initial(90.0).range(60.0..=200.0)) // Size
+                    .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Items
+                    .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Files
+                    .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Subdirs
+                    .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Created
+                    .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Last Modified
+                    .min_scrolled_height(0.0)
+                    .max_scroll_height(available_height);
 
-        // Pass empty slices to automatically disable and hide Highlight Filters
-        let org_colors = &[];
-        let user_colors = &[];
-
-        let (responses, table) = builder
-            .archived_headers(
-                &self.table_state,
-                provider.headers().iter().copied(),
-                24.0,
-                org_colors,
-                user_colors,
-            )
-            .unwrap_or_else(|e| panic!("Failed to render tree headers: {e:?}"));
-
-        // 3. Process header responses back into state (triggers sorting & dirty-caching)
-        let _ = self.table_state.process_responses(&provider, responses);
-
-        // Sync back to global search text field if modified in the column popup Name filter
-        let name_filter_text = self.table_state.columns[0].response.filtering.search.text();
-        if name_filter_text != self.search_query {
-            self.search_query = name_filter_text.to_string();
-        }
-
-        table.body(|body| {
-            // Populate rows strictly from active_rows (preserves filtered/sorted views)
-            body.rows(row_height, self.table_state.active_rows.len(), |mut row| {
-                let r_idx = row.index();
-                let node_idx = self.table_state.active_rows[r_idx] as u32;
-                let node = &snapshot.nodes[node_idx as usize];
-                let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
-
-                let is_selected = self.table_state.selected_rows.contains(node_idx);
-                let is_hovered = self.hovered_node_idx == Some(node_idx);
-                let is_duplicate =
-                    self.highlight_duplicates && self.selected_duplicates.contains(&node_idx);
-
-                let files_count = if node.is_directory() {
-                    node.file_count
-                } else {
-                    0
-                };
-                let subdirs_count = if node.is_directory() {
-                    *snapshot.dir_counts.get(node_idx as usize).unwrap_or(&0)
-                } else {
-                    0
-                };
-                let items_count = files_count + subdirs_count;
-
-                let mut row_clicked = false;
-                let mut row_secondary_clicked = false;
-                let mut row_hovered_by_mouse = false;
-
-                let paint_bg = |ui: &mut egui::Ui, col_idx: usize| {
-                    let mut cell_rect = ui.max_rect();
-                    cell_rect.set_height(row_height);
-                    let spacing = ui.spacing().item_spacing.x;
-                    let mut highlight_rect = cell_rect;
-                    if col_idx > 0 {
-                        highlight_rect.min.x -= spacing / 2.0;
-                    } else {
-                        highlight_rect.min.x = ui.clip_rect().min.x;
-                    }
-                    if col_idx < 7 {
-                        highlight_rect.max.x += spacing / 2.0;
-                    } else {
-                        highlight_rect.max.x = ui.clip_rect().max.x;
-                    }
-                    if is_selected {
-                        let fill_color = visuals.selection.bg_fill.linear_multiply(0.20);
-                        ui.painter().rect_filled(highlight_rect, 0.0, fill_color);
-                    } else if is_hovered {
-                        let hover_color = visuals.widgets.hovered.bg_fill.linear_multiply(0.08);
-                        ui.painter().rect_filled(highlight_rect, 0.0, hover_color);
-                    }
-                };
-
-                // Name Column
-                row.col(|ui| {
-                    paint_bg(ui, 0);
-
-                    if let Some(hierarchy) =
-                        provider.row_hierarchy(&self.table_state, node_idx as usize)
+                // 2. Programmatic Center Scrolling on TableBuilder
+                if self.scroll_to_selected {
+                    if let Some(selected_idx) = self.selected_node_idx
+                        && let Some(row_index) = self
+                            .table_state
+                            .active_rows
+                            .iter()
+                            .position(|&node_idx| node_idx == selected_idx as usize)
                     {
-                        self.table_state
-                            .show_tree_cell(ui, node_idx as usize, hierarchy);
+                        builder = builder.scroll_to_row(row_index, Some(egui::Align::Center));
                     }
+                    self.scroll_to_selected = false;
+                }
 
-                    let icon_text = if node.is_symlink() {
-                        "🔗"
-                    } else if node.is_directory() {
-                        "📁"
-                    } else {
-                        "📄"
-                    };
-                    ui.label(icon_text);
+                // Pass empty slices to automatically disable and hide Highlight Filters
+                let org_colors = &[];
+                let user_colors = &[];
 
-                    let mut rich_name = egui::RichText::new(name);
-                    if self.monospace_paths {
-                        rich_name = rich_name.monospace();
-                    }
-                    if is_selected {
-                        rich_name = rich_name
-                            .strong()
-                            .color(ui.visuals().selection.stroke.color);
-                    } else if is_duplicate {
-                        rich_name = rich_name.color(theme::GLOW_INNER_CORE);
-                    }
+                let (responses, table) = builder
+                    .archived_headers(
+                        &self.table_state,
+                        provider.headers().iter().copied(),
+                        24.0,
+                        org_colors,
+                        user_colors,
+                    )
+                    .unwrap_or_else(|e| panic!("Failed to render tree headers: {e:?}"));
 
-                    let name_width = ui.available_width().max(50.0);
-                    ui.allocate_ui(egui::vec2(name_width, ui.spacing().interact_size.y), |ui| {
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                        ui.label(rich_name);
-                    });
+                // 3. Process header responses back into state (triggers sorting & dirty-caching)
+                let _ = self.table_state.process_responses(&provider, responses);
 
-                    // Offset interaction rect to prevent selection from stealing toggle clicks
-                    let mut cell_rect = ui.max_rect();
-                    let indent = provider
-                        .row_hierarchy(&self.table_state, node_idx as usize)
-                        .map_or(0, |h| h.indent_level);
-                    #[allow(clippy::cast_precision_loss)]
-                    let offset_width = (indent as f32).mul_add(16.0, 16.0);
-                    cell_rect.min.x = (cell_rect.min.x + offset_width).min(cell_rect.max.x);
+                // Sync back to global search text field if modified in the column popup Name filter
+                let name_filter_text = self.table_state.columns[0].response.filtering.search.text();
+                if name_filter_text != self.search_query {
+                    self.search_query = name_filter_text.to_string();
+                }
 
-                    let cell_resp = ui.interact(
-                        cell_rect,
-                        ui.id().with(("cell_interact", 0)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                let mut next_hovered = None;
 
-                // Percentage Column
-                row.col(|ui| {
-                    paint_bg(ui, 1);
-                    let mut cell_rect = ui.max_rect();
-                    cell_rect.set_height(row_height);
+                table.body(|body| {
+                    // Populate rows strictly from active_rows (preserves filtered/sorted views)
+                    body.rows(row_height, self.table_state.active_rows.len(), |mut row| {
+                        let r_idx = row.index();
+                        let node_idx = self.table_state.active_rows[r_idx] as u32;
+                        let node = &snapshot.nodes[node_idx as usize];
+                        let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
 
-                    let parent_idx = node.parent;
-                    let parent_size = if parent_idx == crate::arena::NO_INDEX {
-                        node.size.max(1)
-                    } else {
-                        snapshot.nodes[parent_idx as usize].size.max(1)
-                    };
-                    #[allow(clippy::cast_precision_loss)]
-                    let pct = (node.size as f32 / parent_size as f32).clamp(0.0, 1.0);
+                        let is_selected = self.table_state.selected_rows.contains(node_idx);
+                        let is_hovered = self.hovered_node_idx == Some(node_idx);
+                        let is_duplicate = self.highlight_duplicates
+                            && self.selected_duplicates.contains(&node_idx);
 
-                    let cell_width = cell_rect.width();
-                    let indent = provider
-                        .row_hierarchy(&self.table_state, node_idx as usize)
-                        .map_or(0, |h| h.indent_level);
-                    #[allow(clippy::cast_precision_loss)]
-                    let inset_x = (indent as f32 * 4.0).min(cell_width * 0.3);
-                    let mut bar_rect = cell_rect;
-                    bar_rect.min.x += inset_x;
-
-                    let bar_height = 14.0;
-                    let vertical_margin = (row_height - bar_height) / 2.0;
-                    bar_rect.min.y += vertical_margin;
-                    bar_rect.max.y -= vertical_margin;
-
-                    let colored_width = bar_rect.width() * pct;
-                    let mut colored_rect = bar_rect;
-                    colored_rect.max.x = colored_rect.min.x + colored_width;
-
-                    let bg_color = ui.visuals().widgets.noninteractive.bg_fill;
-                    ui.painter().rect_filled(bar_rect, 0.0, bg_color);
-
-                    if pct > 0.0 {
-                        let ext_color = if node.is_directory() {
-                            egui::Color32::from_rgb(110, 120, 135)
+                        let files_count = if node.is_directory() {
+                            node.file_count
                         } else {
-                            let ext = std::path::Path::new(name)
-                                .extension()
-                                .map_or_else(String::new, |s| {
-                                    s.to_string_lossy().to_ascii_lowercase()
-                                });
-                            theme::get_color_for_extension(&ext)
+                            0
                         };
-                        paint_gradient_rect(
-                            ui.painter(),
-                            colored_rect,
-                            ext_color,
-                            ext_color.linear_multiply(0.75),
-                        );
-                    }
+                        let subdirs_count = if node.is_directory() {
+                            *snapshot.dir_counts.get(node_idx as usize).unwrap_or(&0)
+                        } else {
+                            0
+                        };
+                        let items_count = files_count + subdirs_count;
 
-                    let text = format!("{:.1}%", pct * 100.0);
-                    ui.painter().text(
-                        bar_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        text,
-                        egui::FontId::monospace(10.0),
-                        ui.visuals().widgets.active.text_color(),
-                    );
+                        let mut row_clicked = false;
+                        let mut row_secondary_clicked = false;
+                        let mut row_hovered_by_mouse = false;
 
-                    ui.allocate_rect(cell_rect, egui::Sense::empty());
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 1)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                        let paint_bg = |ui: &mut egui::Ui, col_idx: usize| {
+                            let mut cell_rect = ui.max_rect();
+                            cell_rect.set_height(row_height);
+                            let spacing = ui.spacing().item_spacing.x;
+                            let mut highlight_rect = cell_rect;
+                            if col_idx > 0 {
+                                highlight_rect.min.x -= spacing / 2.0;
+                            } else {
+                                highlight_rect.min.x = ui.clip_rect().min.x;
+                            }
+                            if col_idx < 7 {
+                                highlight_rect.max.x += spacing / 2.0;
+                            } else {
+                                highlight_rect.max.x = ui.clip_rect().max.x;
+                            }
+                            if is_selected {
+                                let fill_color = visuals.selection.bg_fill.linear_multiply(0.20);
+                                ui.painter().rect_filled(highlight_rect, 0.0, fill_color);
+                            } else if is_hovered {
+                                let hover_color =
+                                    visuals.widgets.hovered.bg_fill.linear_multiply(0.08);
+                                ui.painter().rect_filled(highlight_rect, 0.0, hover_color);
+                            }
+                        };
 
-                // Size Column
-                row.col(|ui| {
-                    paint_bg(ui, 2);
-                    ui.label(
-                        prettier_bytes::ByteFormatter::new()
-                            .format(node.size)
-                            .to_string(),
-                    );
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 2)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                        // --- Name Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 0);
 
-                // Items Column
-                row.col(|ui| {
-                    paint_bg(ui, 3);
-                    if node.is_directory() {
-                        ui.label(format!("{items_count}"));
-                    } else {
-                        ui.label("-");
-                    }
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 3)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                            if let Some(hierarchy) =
+                                provider.row_hierarchy(&self.table_state, node_idx as usize)
+                            {
+                                self.table_state
+                                    .show_tree_cell(ui, node_idx as usize, hierarchy);
+                            }
 
-                // Files Column
-                row.col(|ui| {
-                    paint_bg(ui, 4);
-                    if node.is_directory() {
-                        ui.label(format!("{files_count}"));
-                    } else {
-                        ui.label("-");
-                    }
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 4)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                            let icon_text = if node.is_symlink() {
+                                "🔗"
+                            } else if node.is_directory() {
+                                "📁"
+                            } else {
+                                "📄"
+                            };
+                            ui.label(icon_text);
 
-                // Subdirs Column
-                row.col(|ui| {
-                    paint_bg(ui, 5);
-                    if node.is_directory() {
-                        ui.label(format!("{subdirs_count}"));
-                    } else {
-                        ui.label("-");
-                    }
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 5)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                            let mut rich_name = egui::RichText::new(name);
+                            if self.monospace_paths {
+                                rich_name = rich_name.monospace();
+                            }
+                            if is_selected {
+                                rich_name = rich_name
+                                    .strong()
+                                    .color(ui.visuals().selection.stroke.color);
+                            } else if is_duplicate {
+                                rich_name = rich_name.color(theme::GLOW_INNER_CORE);
+                            }
 
-                // Created Column
-                row.col(|ui| {
-                    paint_bg(ui, 6);
-                    ui.label(crate::model::time_utils::format_epoch(
-                        node.created_timestamp,
-                        true,
-                    ));
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 6)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
+                            let name_width = ui.available_width().max(50.0);
+                            ui.allocate_ui(
+                                egui::vec2(name_width, ui.spacing().interact_size.y),
+                                |ui| {
+                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                    ui.label(rich_name);
+                                },
+                            );
 
-                // Last Modified Column
-                row.col(|ui| {
-                    paint_bg(ui, 7);
-                    ui.label(crate::model::time_utils::format_epoch(
-                        node.modified_timestamp,
-                        true,
-                    ));
-                    let cell_resp = ui.interact(
-                        ui.max_rect(),
-                        ui.id().with(("cell_interact", 7)),
-                        egui::Sense::click(),
-                    );
-                    if cell_resp.hovered() {
-                        row_hovered_by_mouse = true;
-                    }
-                    if cell_resp.clicked() {
-                        row_clicked = true;
-                    }
-                    if cell_resp.secondary_clicked() {
-                        row_secondary_clicked = true;
-                    }
-                    cell_resp.context_menu(|ui| {
-                        self.draw_file_menu_contents(ui, snapshot);
-                    });
-                });
-
-                if row_clicked {
-                    // Reconstruct a map of active rows in the active viewport layout for shift selection calculations
-                    let active_rows_mapped: Vec<(u32, usize)> = self
-                        .table_state
-                        .active_rows
-                        .iter()
-                        .map(|&idx| {
+                            // Offset interaction rect to prevent selection from stealing toggle clicks
+                            let mut cell_rect = ui.max_rect();
                             let indent = provider
-                                .row_hierarchy(&self.table_state, idx)
+                                .row_hierarchy(&self.table_state, node_idx as usize)
                                 .map_or(0, |h| h.indent_level);
-                            (idx as u32, indent)
-                        })
-                        .collect();
-                    self.handle_node_click(node_idx, modifiers, &active_rows_mapped);
-                } else if row_secondary_clicked
-                    && !self.table_state.selected_rows.contains(node_idx)
-                {
-                    self.table_state.selected_rows.clear();
-                    self.table_state.selected_rows.insert(node_idx);
-                    self.selected_node_idx = Some(node_idx);
-                    self.focus_node_idx = Some(node_idx);
-                }
+                            #[allow(clippy::cast_precision_loss)]
+                            let offset_width = (indent as f32).mul_add(16.0, 16.0);
+                            cell_rect.min.x = (cell_rect.min.x + offset_width).min(cell_rect.max.x);
 
-                if row_hovered_by_mouse {
-                    next_hovered = Some(node_idx);
-                }
+                            let cell_resp = ui.interact(
+                                cell_rect,
+                                ui.id().with(("cell_interact", 0)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Percentage Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 1);
+                            let mut cell_rect = ui.max_rect();
+                            cell_rect.set_height(row_height);
+
+                            let parent_idx = node.parent;
+                            let parent_size = if parent_idx == crate::arena::NO_INDEX {
+                                node.size.max(1)
+                            } else {
+                                snapshot.nodes[parent_idx as usize].size.max(1)
+                            };
+                            #[allow(clippy::cast_precision_loss)]
+                            let pct = (node.size as f32 / parent_size as f32).clamp(0.0, 1.0);
+
+                            let cell_width = cell_rect.width();
+                            let indent = provider
+                                .row_hierarchy(&self.table_state, node_idx as usize)
+                                .map_or(0, |h| h.indent_level);
+                            #[allow(clippy::cast_precision_loss)]
+                            let inset_x = (indent as f32 * 4.0).min(cell_width * 0.3);
+                            let mut bar_rect = cell_rect;
+                            bar_rect.min.x += inset_x;
+
+                            let bar_height = 14.0;
+                            let vertical_margin = (row_height - bar_height) / 2.0;
+                            bar_rect.min.y += vertical_margin;
+                            bar_rect.max.y -= vertical_margin;
+
+                            let colored_width = bar_rect.width() * pct;
+                            let mut colored_rect = bar_rect;
+                            colored_rect.max.x = colored_rect.min.x + colored_width;
+
+                            let bg_color = ui.visuals().widgets.noninteractive.bg_fill;
+                            ui.painter().rect_filled(bar_rect, 0.0, bg_color);
+
+                            if pct > 0.0 {
+                                let ext_color = if node.is_directory() {
+                                    egui::Color32::from_rgb(110, 120, 135)
+                                } else {
+                                    let ext = std::path::Path::new(name)
+                                        .extension()
+                                        .map_or_else(String::new, |s| {
+                                            s.to_string_lossy().to_ascii_lowercase()
+                                        });
+                                    theme::get_color_for_extension(&ext)
+                                };
+                                paint_gradient_rect(
+                                    ui.painter(),
+                                    colored_rect,
+                                    ext_color,
+                                    ext_color.linear_multiply(0.75),
+                                );
+                            }
+
+                            let text = format!("{:.1}%", pct * 100.0);
+                            ui.painter().text(
+                                bar_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                text,
+                                egui::FontId::monospace(10.0),
+                                ui.visuals().widgets.active.text_color(),
+                            );
+
+                            ui.allocate_rect(cell_rect, egui::Sense::empty());
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 1)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Size Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 2);
+                            ui.label(
+                                prettier_bytes::ByteFormatter::new()
+                                    .format(node.size)
+                                    .to_string(),
+                            );
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 2)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Items Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 3);
+                            if node.is_directory() {
+                                ui.label(format!("{items_count}"));
+                            } else {
+                                ui.label("-");
+                            }
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 3)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Files Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 4);
+                            if node.is_directory() {
+                                ui.label(format!("{files_count}"));
+                            } else {
+                                ui.label("-");
+                            }
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 4)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Subdirs Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 5);
+                            if node.is_directory() {
+                                ui.label(format!("{subdirs_count}"));
+                            } else {
+                                ui.label("-");
+                            }
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 5)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Created Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 6);
+                            ui.label(crate::model::time_utils::format_epoch(
+                                node.created_timestamp,
+                                true,
+                            ));
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 6)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        // --- Last Modified Column ---
+                        row.col(|ui| {
+                            paint_bg(ui, 7);
+                            ui.label(crate::model::time_utils::format_epoch(
+                                node.modified_timestamp,
+                                true,
+                            ));
+                            let cell_resp = ui.interact(
+                                ui.max_rect(),
+                                ui.id().with(("cell_interact", 7)),
+                                egui::Sense::click(),
+                            );
+                            if cell_resp.hovered() {
+                                row_hovered_by_mouse = true;
+                            }
+                            if cell_resp.clicked() {
+                                row_clicked = true;
+                            }
+                            if cell_resp.secondary_clicked() {
+                                row_secondary_clicked = true;
+                            }
+                            cell_resp.context_menu(|ui| {
+                                self.draw_file_menu_contents(ui, snapshot);
+                            });
+                        });
+
+                        if row_clicked {
+                            let active_rows_mapped: Vec<(u32, usize)> = self
+                                .table_state
+                                .active_rows
+                                .iter()
+                                .map(|&idx| {
+                                    let indent = provider
+                                        .row_hierarchy(&self.table_state, idx)
+                                        .map_or(0, |h| h.indent_level);
+                                    (idx as u32, indent)
+                                })
+                                .collect();
+                            self.handle_node_click(node_idx, modifiers, &active_rows_mapped);
+                        } else if row_secondary_clicked
+                            && !self.table_state.selected_rows.contains(node_idx)
+                        {
+                            self.table_state.selected_rows.clear();
+                            self.table_state.selected_rows.insert(node_idx);
+                            self.selected_node_idx = Some(node_idx);
+                            self.focus_node_idx = Some(node_idx);
+                        }
+
+                        if row_hovered_by_mouse {
+                            next_hovered = Some(node_idx);
+                        }
+                    });
+                });
+
+                self.hovered_node_idx = next_hovered;
             });
-        });
-
-        self.hovered_node_idx = next_hovered;
     }
 
     pub fn render_multi_file_detail_list(
