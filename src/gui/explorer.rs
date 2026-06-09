@@ -30,6 +30,7 @@ impl<'a> TableProviderWrapper<'a> {
                 "Items",
                 "Files",
                 "Subdirs",
+                "Created",
                 "Last Modified",
             ],
         }
@@ -187,6 +188,10 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
                     }
                 }
                 6 => {
+                    // Created date string
+                    crate::model::time_utils::format_epoch(node.created_timestamp, true)
+                }
+                7 => {
                     // Last Modified date string
                     crate::model::time_utils::format_epoch(node.modified_timestamp, true)
                 }
@@ -236,6 +241,10 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
                     files_a.cmp(&files_b)
                 }
                 6 => {
+                    // Sort by Created
+                    node_a.created_timestamp.cmp(&node_b.created_timestamp)
+                }
+                7 => {
                     // Sort by Last Modified
                     node_a.modified_timestamp.cmp(&node_b.modified_timestamp)
                 }
@@ -517,6 +526,10 @@ impl GuiApp {
                             files_a.cmp(&files_b)
                         }
                         6 => {
+                            // Sort by Created
+                            node_a.created_timestamp.cmp(&node_b.created_timestamp)
+                        }
+                        7 => {
                             // Sort by Last Modified
                             node_a.modified_timestamp.cmp(&node_b.modified_timestamp)
                         }
@@ -706,10 +719,10 @@ impl GuiApp {
         }
 
         // Sync global self.search_query to TableState's Column 0 (Name) filter search text!
-        if self.table_state.columns.is_empty() {
+        if self.table_state.columns.len() < 8 {
             self.table_state
                 .columns
-                .resize_with(7, egui_table_kit::header::ColumnState::default);
+                .resize_with(8, egui_table_kit::header::ColumnState::default);
         }
 
         let name_col = &mut self.table_state.columns[0];
@@ -751,6 +764,7 @@ impl GuiApp {
             .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Items
             .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Files
             .column(egui_extras::Column::initial(70.0).range(40.0..=150.0)) // Subdirs
+            .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Created
             .column(egui_extras::Column::initial(150.0).range(100.0..=300.0)) // Last Modified
             .min_scrolled_height(0.0)
             .max_scroll_height(available_height);
@@ -831,7 +845,7 @@ impl GuiApp {
                     } else {
                         highlight_rect.min.x = ui.clip_rect().min.x;
                     }
-                    if col_idx < 6 {
+                    if col_idx < 7 {
                         highlight_rect.max.x += spacing / 2.0;
                     } else {
                         highlight_rect.max.x = ui.clip_rect().max.x;
@@ -1103,16 +1117,42 @@ impl GuiApp {
                     });
                 });
 
-                // Last Modified Column
+                // Created Column
                 row.col(|ui| {
                     paint_bg(ui, 6);
+                    ui.label(crate::model::time_utils::format_epoch(
+                        node.created_timestamp,
+                        true,
+                    ));
+                    let cell_resp = ui.interact(
+                        ui.max_rect(),
+                        ui.id().with(("cell_interact", 6)),
+                        egui::Sense::click(),
+                    );
+                    if cell_resp.hovered() {
+                        row_hovered_by_mouse = true;
+                    }
+                    if cell_resp.clicked() {
+                        row_clicked = true;
+                    }
+                    if cell_resp.secondary_clicked() {
+                        row_secondary_clicked = true;
+                    }
+                    cell_resp.context_menu(|ui| {
+                        self.draw_file_menu_contents(ui, snapshot);
+                    });
+                });
+
+                // Last Modified Column
+                row.col(|ui| {
+                    paint_bg(ui, 7);
                     ui.label(crate::model::time_utils::format_epoch(
                         node.modified_timestamp,
                         true,
                     ));
                     let cell_resp = ui.interact(
                         ui.max_rect(),
-                        ui.id().with(("cell_interact", 6)),
+                        ui.id().with(("cell_interact", 7)),
                         egui::Sense::click(),
                     );
                     if cell_resp.hovered() {
