@@ -1264,7 +1264,8 @@ impl GuiApp {
                         for idx in selected {
                             if idx < snapshot.nodes.len() as u32 {
                                 let node = &snapshot.nodes[idx as usize];
-                                let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+                                let name =
+                                    snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
                                 names.push(name.to_string());
                             }
                         }
