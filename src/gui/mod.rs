@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use compact_str::CompactString;
 use eframe::egui;
 use rfd::FileDialog;
 
@@ -350,23 +351,25 @@ impl GuiApp {
         self.scan_start_time = None;
 
         // Rebuild extension stats exactly once in the background upon load
+        let mut ext_map: HashMap<CompactString, (u64, u32), ahash::RandomState> =
+            HashMap::with_hasher(ahash::RandomState::new());
+
         let snapshot = self.shared_state.current_snapshot.load();
-        let mut ext_map: HashMap<String, (u64, u32)> = HashMap::new();
         for node in snapshot.nodes.iter() {
             if node.is_directory() {
                 continue;
             }
             if let Some(name) = snapshot.string_pool.get(node.name_id) {
                 let ext = Path::new(name).extension().map_or_else(
-                    || NO_EXTENSION.to_string(),
-                    |s| s.to_string_lossy().to_ascii_lowercase(),
+                    || CompactString::new(NO_EXTENSION),
+                    |s| CompactString::from(s.to_string_lossy().as_ref()).to_ascii_lowercase(),
                 );
                 let entry = ext_map.entry(ext).or_insert((0, 0));
                 entry.0 += node.size;
                 entry.1 += 1;
             }
         }
-        let mut stats: Vec<(String, u64, u32)> = ext_map
+        let mut stats: Vec<(CompactString, u64, u32)> = ext_map
             .into_iter()
             .map(|(ext, (total_size, file_count))| (ext, total_size, file_count))
             .collect();

@@ -1,9 +1,10 @@
+use compact_str::CompactString;
 use eframe::egui;
 
 use super::{GuiApp, theme};
 
 pub struct ExtensionStat {
-    pub ext: String,
+    pub ext: CompactString,
     pub total_size: u64,
     pub file_count: u32,
     pub color: egui::Color32,
@@ -77,7 +78,7 @@ impl GuiApp {
                                     |ui| {
                                         ui.style_mut().wrap_mode =
                                             Some(egui::TextWrapMode::Truncate);
-                                        ui.label(&stat.ext)
+                                        ui.label(stat.ext.as_str())
                                             .on_hover_text(format!("Files: {}", stat.file_count));
                                     },
                                 );

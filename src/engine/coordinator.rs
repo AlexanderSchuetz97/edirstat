@@ -7,10 +7,13 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use compact_str::CompactString;
 use crossbeam::channel::Receiver;
 
 use super::traversal::{LocalId, ScanEvent};
-use crate::arena::{FileArenaSnapshot, FileNode, NO_INDEX, StringPool, precompute_dir_counts};
+use crate::arena::{
+    FileArenaSnapshot, FileNode, NO_EXTENSION, NO_INDEX, StringPool, precompute_dir_counts,
+};
 
 #[derive(Debug)]
 pub struct SharedState {
@@ -19,7 +22,7 @@ pub struct SharedState {
     /// Indicates whether the scanner is actively running
     pub is_scanning: Arc<AtomicBool>,
     /// Background-computed live extension statistics (ext, `total_size`, `file_count`)
-    pub extension_stats: ArcSwap<Vec<(String, u64, u32)>>,
+    pub extension_stats: ArcSwap<Vec<(CompactString, u64, u32)>>,
 }
 
 impl Default for SharedState {
@@ -66,7 +69,7 @@ impl Coordinator {
         let mut string_pool = StringPool::new();
 
         // Local extension tracking in the background thread
-        let mut ext_map: std::collections::HashMap<String, (u64, u32), ahash::RandomState> =
+        let mut ext_map: std::collections::HashMap<CompactString, (u64, u32), ahash::RandomState> =
             std::collections::HashMap::with_hasher(ahash::RandomState::new());
 
         // Local to Global ID mapping: outer index is worker_id, inner is local_id.0
@@ -196,8 +199,11 @@ impl Coordinator {
 
                             // O(1) Background Live Extension Tracking
                             let ext = std::path::Path::new(&name).extension().map_or_else(
-                                || "(no extension)".to_string(),
-                                |s| s.to_string_lossy().to_ascii_lowercase(),
+                                || CompactString::new(NO_EXTENSION),
+                                |s| {
+                                    CompactString::from(s.to_string_lossy().as_ref())
+                                        .to_ascii_lowercase()
+                                },
                             );
                             let entry = ext_map.entry(ext).or_insert((0, 0));
                             entry.0 += size;
@@ -220,7 +226,7 @@ impl Coordinator {
                 self.shared_state.current_snapshot.store(Arc::new(snapshot));
 
                 // Publish background sorted statistics
-                let mut stats_vec: Vec<(String, u64, u32)> = ext_map
+                let mut stats_vec: Vec<(CompactString, u64, u32)> = ext_map
                     .iter()
                     .map(|(ext, &(total_size, file_count))| (ext.clone(), total_size, file_count))
                     .collect();
@@ -241,7 +247,7 @@ impl Coordinator {
         };
         self.shared_state.current_snapshot.store(Arc::new(snapshot));
 
-        let mut stats_vec: Vec<(String, u64, u32)> = ext_map
+        let mut stats_vec: Vec<(CompactString, u64, u32)> = ext_map
             .into_iter()
             .map(|(ext, (total_size, file_count))| (ext, total_size, file_count))
             .collect();
