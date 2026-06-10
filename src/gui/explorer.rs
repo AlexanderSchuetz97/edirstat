@@ -1262,11 +1262,15 @@ impl GuiApp {
                         .color(ui.visuals().strong_text_color()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let deselect_btn = ui.scope(|ui| {
-                        ui.style_mut().visuals.button_frame = false;
-                        ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68));
-                        ui.button("❌")
-                    }).inner.on_hover_text("Deselect items");
+                    let deselect_btn = ui
+                        .scope(|ui| {
+                            ui.style_mut().visuals.button_frame = false;
+                            ui.style_mut().visuals.widgets.hovered.fg_stroke =
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68));
+                            ui.button("❌")
+                        })
+                        .inner
+                        .on_hover_text("Deselect items");
                     if deselect_btn.clicked() {
                         self.table_state.selected_rows.clear();
                         self.selected_node_idx = None;
@@ -1305,7 +1309,8 @@ impl GuiApp {
                         "🔄 Refresh Directory",
                         egui::Color32::from_rgb(34, 197, 94), // Green
                         is_dir_selected,
-                    ).on_hover_text("Refresh all selected directory subtrees");
+                    )
+                    .on_hover_text("Refresh all selected directory subtrees");
                     if refresh_btn.clicked() {
                         let dirs: Vec<u32> = self
                             .table_state
@@ -1372,11 +1377,15 @@ impl GuiApp {
                         .color(ui.visuals().strong_text_color()),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let deselect_btn = ui.scope(|ui| {
-                        ui.style_mut().visuals.button_frame = false;
-                        ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68));
-                        ui.button("❌")
-                    }).inner.on_hover_text("Deselect item");
+                    let deselect_btn = ui
+                        .scope(|ui| {
+                            ui.style_mut().visuals.button_frame = false;
+                            ui.style_mut().visuals.widgets.hovered.fg_stroke =
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68));
+                            ui.button("❌")
+                        })
+                        .inner
+                        .on_hover_text("Deselect item");
                     if deselect_btn.clicked() {
                         self.table_state.selected_rows.clear();
                         self.selected_node_idx = None;
@@ -1772,17 +1781,21 @@ fn draw_action_button(
 
             // Inactive (transparent/very subtle background border)
             ui.style_mut().visuals.widgets.inactive.weak_bg_fill = color.linear_multiply(0.04);
-            ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, color.linear_multiply(0.2));
-            ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, ui.visuals().widgets.inactive.text_color());
+            ui.style_mut().visuals.widgets.inactive.bg_stroke =
+                egui::Stroke::new(1.0, color.linear_multiply(0.2));
+            ui.style_mut().visuals.widgets.inactive.fg_stroke =
+                egui::Stroke::new(1.0, ui.visuals().widgets.inactive.text_color());
 
             // Hovered (soft fill, solid border)
             ui.style_mut().visuals.widgets.hovered.weak_bg_fill = color.linear_multiply(0.12);
-            ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, color.linear_multiply(0.45));
+            ui.style_mut().visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, color.linear_multiply(0.45));
             ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, color);
 
             // Active (pressed)
             ui.style_mut().visuals.widgets.active.weak_bg_fill = color.linear_multiply(0.22);
-            ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, color.linear_multiply(0.65));
+            ui.style_mut().visuals.widgets.active.bg_stroke =
+                egui::Stroke::new(1.0, color.linear_multiply(0.65));
             ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, color);
 
             ui.button(label)
