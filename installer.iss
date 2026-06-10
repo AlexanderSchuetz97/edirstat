@@ -1,5 +1,5 @@
 [Setup]
-AppId={{9F8A8B42-4D9E-4C21-A9E5-C8D7C8D7B8E2}}
+AppId={{019EB36D-2D44-7A10-A0D3-1DA29AA7865C}}
 AppName=eDirStat
 AppVersion=1.1.0
 AppPublisher=Cody Wyatt Neiman (xangelix)
