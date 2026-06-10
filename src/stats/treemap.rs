@@ -5,6 +5,7 @@ use super::{StatComponent, StatContext, StatsChart};
 use crate::arena::{FileNode, NO_INDEX, StringPool};
 
 const TRUNCATE_DEPTH: usize = 30000;
+const PIXEL_PRECISION_LIMIT: f32 = 0.2;
 
 pub struct TreemapBlock {
     pub rect: Rect,
@@ -334,7 +335,7 @@ fn recurse_child(
 ) {
     const MIN_PIXEL_DIM: f32 = 12.0;
 
-    if child_rect.width() < 1.0 || child_rect.height() < 1.0 {
+    if child_rect.width() < PIXEL_PRECISION_LIMIT || child_rect.height() < PIXEL_PRECISION_LIMIT {
         return; // Discard sub-pixel visual artifacts early
     }
 
@@ -387,7 +388,10 @@ fn build_treemap(
     const MIN_AVG_CHILD_AREA: f64 = 16.0;
 
     let node = &config.nodes[node_idx as usize];
-    if node.size == 0 || rect.width() < 1.0 || rect.height() < 1.0 {
+    if node.size == 0
+        || rect.width() < PIXEL_PRECISION_LIMIT
+        || rect.height() < PIXEL_PRECISION_LIMIT
+    {
         return;
     }
 
