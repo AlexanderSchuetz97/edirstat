@@ -67,7 +67,6 @@ pub struct GuiApp {
     pub(crate) operations: egui_table_kit::operations::TableOperations,
 
     // UI state
-    pub(crate) selected_node_idx: Option<u32>,
     pub(crate) focus_node_idx: Option<u32>,
     pub(crate) delete_node_indices: Vec<u32>,
     pub(crate) search_query: String,
@@ -191,7 +190,6 @@ impl GuiApp {
             table_state: egui_table_kit::state::TableState::new("edirstat_hierarchical_table", 0),
             command_rx,
             operations,
-            selected_node_idx: None,
             focus_node_idx: None,
             delete_node_indices: Vec::new(),
             search_query: String::new(),
@@ -261,7 +259,6 @@ impl GuiApp {
     }
 
     fn reset_state(&mut self) {
-        self.selected_node_idx = None;
         self.table_state.selected_rows.clear();
         self.table_state.expanded_rows.clear();
         self.table_state.active_rows.clear();
@@ -298,12 +295,22 @@ impl GuiApp {
         self.last_extension_stats_ptr = 0;
     }
 
+    /// Safely retrieves the single selected node index (if exactly one is selected)
+    #[must_use]
+    #[inline]
+    pub fn selected_node_idx(&self) -> Option<u32> {
+        if self.table_state.selected_rows.len() == 1 {
+            self.table_state.selected_rows.iter().next()
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn start_scan(&mut self, path: PathBuf) {
         self.reset_state();
 
         // Select the root row by default
         self.table_state.selected_rows.insert(0);
-        self.selected_node_idx = Some(0);
         self.focus_node_idx = Some(0);
 
         self.current_scan_path = Some(path.clone());
@@ -336,7 +343,6 @@ impl GuiApp {
 
         // Select the root row by default
         self.table_state.selected_rows.insert(0);
-        self.selected_node_idx = Some(0);
         self.focus_node_idx = Some(0);
 
         let loaded_snapshot = FileArenaSnapshot {
@@ -1033,7 +1039,7 @@ impl GuiApp {
                 // --- Mathematically Correct Programmatic Scrolling ---
                 let mut scroll_area = egui::ScrollArea::vertical();
                 if self.scroll_to_selected {
-                    if let Some(selected_idx) = self.selected_node_idx {
+                    if let Some(selected_idx) = self.selected_node_idx() {
                         // Find the index of the selected item in the flat visible list
                         if let Some(row_index) = visible_nodes
                             .iter()
@@ -1100,12 +1106,6 @@ impl GuiApp {
                             self.table_state
                                 .selected_rows
                                 .extend(selected_nodes_set.iter());
-                            if self.table_state.selected_rows.len() == 1 {
-                                self.selected_node_idx =
-                                    self.table_state.selected_rows.iter().next();
-                            } else {
-                                self.selected_node_idx = None;
-                            }
                         }
 
                         // Content-Aware Sync (Expansions)
@@ -1175,12 +1175,6 @@ impl GuiApp {
                             self.table_state
                                 .selected_rows
                                 .extend(selected_nodes_set.iter());
-                            if self.table_state.selected_rows.len() == 1 {
-                                self.selected_node_idx =
-                                    self.table_state.selected_rows.iter().next();
-                            } else {
-                                self.selected_node_idx = None;
-                            }
                         }
 
                         // Content-Aware Sync (Expansions)
@@ -1337,12 +1331,6 @@ impl GuiApp {
                                 self.table_state
                                     .selected_rows
                                     .extend(selected_nodes_set.iter());
-                                if self.table_state.selected_rows.len() == 1 {
-                                    self.selected_node_idx =
-                                        self.table_state.selected_rows.iter().next();
-                                } else {
-                                    self.selected_node_idx = None;
-                                }
                             }
 
                             // Content-Aware Sync (Expansions)
@@ -1422,12 +1410,6 @@ impl GuiApp {
                                         self.table_state
                                             .selected_rows
                                             .extend(selected_nodes_set.iter());
-                                        if self.table_state.selected_rows.len() == 1 {
-                                            self.selected_node_idx =
-                                                self.table_state.selected_rows.iter().next();
-                                        } else {
-                                            self.selected_node_idx = None;
-                                        }
                                     }
 
                                     // Content-Aware Sync (Expansions)

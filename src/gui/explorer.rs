@@ -427,13 +427,6 @@ impl GuiApp {
             selected_rows.insert(clicked_node_idx);
             self.focus_node_idx = Some(clicked_node_idx);
         }
-
-        // Sync back selected_node_idx
-        if selected_rows.len() == 1 {
-            self.selected_node_idx = selected_rows.iter().next();
-        } else {
-            self.selected_node_idx = None;
-        }
     }
 
     pub fn flatten_visible_tree(
@@ -666,12 +659,10 @@ impl GuiApp {
             let modifiers = ui.input(|i| i.modifiers);
             self.table_state
                 .handle_row_selection(modifiers, node_idx as usize);
-            self.selected_node_idx = self.table_state.selected_rows.iter().next();
         } else if response.secondary_clicked() && !self.table_state.selected_rows.contains(node_idx)
         {
             self.table_state.selected_rows.clear();
             self.table_state.selected_rows.insert(node_idx);
-            self.selected_node_idx = Some(node_idx);
             self.focus_node_idx = Some(node_idx);
         }
 
@@ -773,7 +764,7 @@ impl GuiApp {
 
                 // 2. Programmatic Center Scrolling on TableBuilder
                 if self.scroll_to_selected {
-                    if let Some(selected_idx) = self.selected_node_idx
+                    if let Some(selected_idx) = self.selected_node_idx()
                         && let Some(row_index) = self
                             .table_state
                             .active_rows
@@ -1195,7 +1186,6 @@ impl GuiApp {
                         {
                             self.table_state.selected_rows.clear();
                             self.table_state.selected_rows.insert(node_idx);
-                            self.selected_node_idx = Some(node_idx);
                             self.focus_node_idx = Some(node_idx);
                         }
 
@@ -1273,7 +1263,6 @@ impl GuiApp {
                         .on_hover_text("Deselect items");
                     if deselect_btn.clicked() {
                         self.table_state.selected_rows.clear();
-                        self.selected_node_idx = None;
                         self.focus_node_idx = None;
                     }
                 });
@@ -1388,7 +1377,6 @@ impl GuiApp {
                         .on_hover_text("Deselect item");
                     if deselect_btn.clicked() {
                         self.table_state.selected_rows.clear();
-                        self.selected_node_idx = None;
                         self.focus_node_idx = None;
                     }
                 });

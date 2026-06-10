@@ -289,12 +289,6 @@ impl GuiApp {
             }
 
             self.remove_nodes_from_snapshot(&successfully_deleted);
-
-            if self.table_state.selected_rows.len() == 1 {
-                self.selected_node_idx = self.table_state.selected_rows.iter().next();
-            } else {
-                self.selected_node_idx = None;
-            }
         }
     }
 
@@ -446,12 +440,6 @@ impl GuiApp {
             }
 
             self.remove_nodes_from_snapshot(&successfully_linked);
-
-            if self.table_state.selected_rows.len() == 1 {
-                self.selected_node_idx = self.table_state.selected_rows.iter().next();
-            } else {
-                self.selected_node_idx = None;
-            }
         }
     }
 
