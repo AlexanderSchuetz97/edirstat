@@ -1,4 +1,4 @@
-name: Upload Release Binary
+name: Package Production Release Binaries
 
 on:
   release:
@@ -8,31 +8,12 @@ permissions:
   contents: write
 
 jobs:
-  build-linux-windows:
-    name: Build & Upload Linux/Windows (${{ matrix.target }})
+  build-linux:
+    name: Package Linux Production
     runs-on: ubuntu-latest
-
     container:
       image: registry.gitlab.com/xangelix-pub/containers/arch-rust-nightly-pin-common:latest
       options: --user root # How I wish this were GitLab
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            asset_name: edirstat-linux-x86_64
-            binary_path: target/release/edirstat
-            setup_cmd: echo "Using native target architecture."
-            build_cmd: cargo build --release
-
-          - target: x86_64-pc-windows-gnu
-            asset_name: edirstat-windows-x86_64.exe
-            binary_path: target/x86_64-pc-windows-gnu/release/edirstat.exe
-            setup_cmd: |
-              paru -Syu --noconfirm mingw-w64
-              rustup target add x86_64-pc-windows-gnu
-            build_cmd: cargo build --release --target x86_64-pc-windows-gnu
 
     steps:
       - name: Checkout Source Code
@@ -40,41 +21,93 @@ jobs:
 
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-
-      - name: Install Target Dependencies
-        run: ${{ matrix.setup_cmd }}
 
       - name: Compile optimized release binary
-        run: ${{ matrix.build_cmd }}
+        run: cargo build --release
 
-      - name: Stage Release Asset
+      - name: Stage Artifact
         run: |
           mkdir -p staging
-          cp ${{ matrix.binary_path }} staging/${{ matrix.asset_name }}
+          cp target/release/edirstat staging/edirstat-linux-x86_64
 
-      - name: Upload Asset to GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Store Production Binary as Private Artifact
+        uses: actions/upload-artifact@v7
         with:
-          files: staging/${{ matrix.asset_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: edirstat-linux-x86_64
+          path: staging/edirstat-linux-x86_64
+
+      # - name: Upload Asset to GitHub Release
+      #   uses: softprops/action-gh-release@v3
+      #   with:
+      #     files: staging/edirstat-linux-x86_64
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Package Windows Production (Inno Setup)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v6
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-04-15
+          target: x86_64-pc-windows-msvc
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@v2
+
+      - name: Compile optimized release binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Restructure Build Path
+        run: |
+          mkdir target\release
+          cp target\x86_64-pc-windows-msvc\release\edirstat.exe target\release\edirstat.exe
+
+      - name: Compile Inno Setup Installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Prepare Portable ZIP
+        run: |
+          compress-archive -Path target\release\edirstat.exe -DestinationPath staging\edirstat-windows-portable-x86_64.zip
+
+      - name: Store Portable ZIP as Private Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: edirstat-windows-portable-x86_64.zip
+          path: staging\edirstat-windows-portable-x86_64.zip
+
+      - name: Store Production Installer as Private Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: edirstat-setup-x86_64.exe
+          path: staging\edirstat-setup-x86_64.exe
+
+      # - name: Upload Portable ZIP to GitHub Release
+      #   uses: softprops/action-gh-release@v3
+      #   with:
+      #     files: staging/edirstat-windows-portable-x86_64.zip
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #
+      # - name: Upload Installer to GitHub Release
+      #   uses: softprops/action-gh-release@v3
+      #   with:
+      #     files: staging/edirstat-setup-x86_64.exe
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-macos:
-    name: Build & Package macOS (${{ matrix.target }})
+    name: Package macOS Production
     runs-on: macos-latest
-    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     strategy:
-      fail-fast: false
       matrix:
-        include:
-          - target: aarch64-apple-darwin
-            asset_name: edirstat-macos-arm64
-            binary_path: target/aarch64-apple-darwin/release/edirstat
-          - target: x86_64-apple-darwin
-            asset_name: edirstat-macos-x86_64
-            binary_path: target/x86_64-apple-darwin/release/edirstat
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
 
     steps:
       - name: Checkout Source Code
@@ -102,7 +135,7 @@ jobs:
           mkdir -p "$APP_DIR/Contents/Resources"
 
           # 2. Move compiled binary into position
-          cp ${{ matrix.binary_path }} "$APP_DIR/Contents/MacOS/edirstat"
+          cp target/${{ matrix.target }}/release/edirstat "$APP_DIR/Contents/MacOS/edirstat"
 
           # 3. Automatically compile the .icns asset using standard Apple tooling
           mkdir -p eDirStat.iconset
@@ -145,20 +178,17 @@ jobs:
 
           # 6. Compress app bundle into a standard .zip archive to protect folder permissions
           cd staging
-          zip -r "../${{ matrix.asset_name }}.zip" eDirStat.app
-          cd ..
+          zip -r "../edirstat-macos-${{ matrix.target }}.zip" eDirStat.app
 
-      - name: Upload Asset to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v3
-        with:
-          files: ${{ matrix.asset_name }}.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Asset as Artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Store macOS Package as Private Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.asset_name }}.zip
-          path: ${{ matrix.asset_name }}.zip
+          name: edirstat-macos-${{ matrix.target }}.zip
+          path: edirstat-macos-${{ matrix.target }}.zip
+
+      # - name: Upload Asset to GitHub Release
+      #   uses: softprops/action-gh-release@v3
+      #   with:
+      #     files: edirstat-macos-${{ matrix.target }}.zip
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
