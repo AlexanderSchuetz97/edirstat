@@ -32,19 +32,19 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is built from
 
 ## 📸 Screenshots
 
-![eDirStat Main Interface - Directory Tree and Interactive Treemap](docs/screenshots/main_interface.jpg)
+![eDirStat Main Interface - Directory Tree and Interactive Treemap](docs/screenshots/main_interface.png)
 
 ![eDirStat Deduplicator - Deduplication File Scan](docs/screenshots/deduplicator.png)
 
-![eDirStat Plots - File Size Distribution](docs/screenshots/file_size_distribution.jpg)
+![eDirStat Plots - File Size Distribution](docs/screenshots/file_size_distribution.png)
 
-![eDirStat Plots - File Age vs File Size](docs/screenshots/file_age_vs_file_size.jpg)
+![eDirStat Plots - File Age vs File Size](docs/screenshots/file_age_vs_file_size.png)
 
-![eDirStat Plots - Directory Composition](docs/screenshots/directory_composition.jpg)
+![eDirStat Plots - Directory Composition](docs/screenshots/directory_composition.png)
 
-![eDirStat Plots - File Sizes by Extension](docs/screenshots/file_sizes_by_extension.jpg)
+![eDirStat Plots - File Sizes by Extension](docs/screenshots/file_sizes_by_extension.png)
 
-![eDirStat Plots - Linked Temporal Timelines](docs/screenshots/linked_temporal_timelines.jpg)
+![eDirStat Plots - Linked Temporal Timelines](docs/screenshots/linked_temporal_timelines.png)
 
 ![eDirStat Plots - Duplicate Waste by Extension](docs/screenshots/duplicate_waste_by_extension.png)
 
