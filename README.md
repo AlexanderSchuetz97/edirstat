@@ -171,6 +171,8 @@ The `.edst` snapshot file layout matches the structure of the in-memory arena:
 
 ### 5. Multi-Stage Deduplication Engine (`src/stats/deduplicator.rs`)
 
+<https://github.com/user-attachments/assets/3b9e009b-399a-4c52-8037-24bb1ab65703>
+
 The deduplication module detects byte-for-byte identical files with minimal disk I/O. Candidate duplicate groups are identified and isolated through a 7-stage pipeline:
 
 1. **Size Partitioning:** Scanned files are grouped by identical byte counts. Singleton sizes are discarded immediately.
