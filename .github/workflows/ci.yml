@@ -103,8 +103,8 @@ jobs:
 
       - name: Restructure Build Path
         run: |
-          mkdir target\release
-          cp target\x86_64-pc-windows-msvc\release\edirstat.exe target\release\edirstat.exe
+          mkdir -Force target\release
+          cp -Force target\x86_64-pc-windows-msvc\release\edirstat.exe target\release\edirstat.exe
 
       - name: Compile Inno Setup Installer
         run: |
