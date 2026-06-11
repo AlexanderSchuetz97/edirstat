@@ -637,7 +637,7 @@ impl eframe::App for GuiApp {
         }
 
         // Background Modal polling processing for custom TableOperations
-        for op_group in &mut self.operations.0 {
+        for op_group in &mut self.operations.groups {
             for op in op_group {
                 if op.is_modal_open() {
                     let _ = op.poll(ui, &mut self.table_state);
