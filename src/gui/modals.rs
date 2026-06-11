@@ -15,6 +15,7 @@ pub enum ActiveModal {
     HardlinkDuplicates,
     SoftlinkDuplicates,
     HowItWorks,
+    AdminWarning,
 }
 
 fn count_nested_stats(
@@ -859,6 +860,104 @@ impl GuiApp {
             }
         }
 
+        // Render the Admin Access Recommendation Modal
+        if self.active_modal == Some(ActiveModal::AdminWarning) {
+            let mut open = true;
+            egui::Window::new("⚠ Elevation Recommended")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut open)
+                .title_bar(false) // Disable default system title bar to match custom styles
+                .frame(
+                    egui::Frame::window(&ctx.global_style())
+                        .fill(theme::BG_WINDOW_SLATE)
+                        .stroke(egui::Stroke::new(1.2, egui::Color32::from_rgb(74, 85, 104)))
+                        .inner_margin(egui::Margin::ZERO)
+                        .corner_radius(8.0),
+                )
+                .show(ctx, |ui| {
+                    // Header Area
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::symmetric(16, 12))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.heading(
+                                    egui::RichText::new("⚠ Elevation Recommended")
+                                        .color(ui.visuals().strong_text_color())
+                                        .strong(),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let close_btn = ui.button("❌");
+                                    if close_btn.clicked() {
+                                        self.active_modal = None;
+                                    }
+                                });
+                            });
+                        });
+
+                    // Separator line
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE));
+
+                    // Content Area
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin::same(16))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                ui.label("eDirStat runs with standard user privileges by default. However, Windows strictly restricts raw physical disk handle access to administrator accounts.");
+                                ui.add_space(10.0);
+
+                                // Warning highlight box
+                                egui::Frame::new()
+                                    .fill(theme::BG_PANEL_SLATE)
+                                    .stroke(egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE))
+                                    .inner_margin(egui::Margin::same(12))
+                                    .corner_radius(4.0)
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.colored_label(theme::WARNING_RED, "⚡");
+                                            ui.vertical(|ui| {
+                                                ui.strong("Windows NTFS MFT Driver Disabled");
+                                                ui.small("Without administrative privileges, the direct-to-disk MFT scanner cannot initialize. File analysis will use the fallback standard traversal driver, reducing scan performance by as much as 20x.");
+                                            });
+                                        });
+                                    });
+
+                                ui.add_space(12.0);
+                                ui.label("Would you like to relaunch the application with Administrator privileges now?");
+                                ui.add_space(16.0);
+
+                                // Modal actions footer
+                                ui.horizontal(|ui| {
+                                    if ui.button("Continue as Standard User").clicked() {
+                                        self.active_modal = None;
+                                    }
+
+                                    let relaunch_btn = egui::Button::new(
+                                        egui::RichText::new("🛡 Relaunch as Admin")
+                                            .color(theme::COLOR_WHITE)
+                                            .strong(),
+                                    )
+                                    .fill(theme::BUTTON_ORANGE);
+
+                                    if ui.add(relaunch_btn).clicked() {
+                                        #[cfg(target_os = "windows")]
+                                        {
+                                            let _ = relaunch_as_admin();
+                                        }
+                                    }
+                                });
+                            });
+                        });
+                });
+            if !open {
+                self.active_modal = None;
+            }
+        }
+
         // Render Help -> About Modal Popup
         if self.active_modal == Some(ActiveModal::About) {
             let mut open = true;
@@ -1186,6 +1285,77 @@ impl GuiApp {
             state.is_scanning.store(false, Ordering::SeqCst);
         });
     }
+}
+
+// 2. Add these elevation check and relaunch helpers (safe for all platforms)
+#[cfg(target_os = "windows")]
+#[must_use]
+pub fn is_elevated() -> bool {
+    use std::mem;
+
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    unsafe {
+        let mut token = windows::Win32::Foundation::HANDLE::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token).is_ok() {
+            let mut elevation: TOKEN_ELEVATION = mem::zeroed();
+            let mut return_length = 0;
+            let info_size = mem::size_of::<TOKEN_ELEVATION>() as u32;
+
+            let success = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some((&raw mut elevation).cast()),
+                info_size,
+                &raw mut return_length,
+            );
+
+            let _ = CloseHandle(token);
+
+            if success.is_ok() {
+                return elevation.TokenIsElevated != 0;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+#[must_use]
+pub const fn is_elevated() -> bool {
+    true // Treat non-Windows targets as elevated to bypass the warning modal
+}
+
+#[cfg(target_os = "windows")]
+pub fn relaunch_as_admin() -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWDEFAULT;
+
+    let current_exe = std::env::current_exe()?;
+    let mut exe_path: Vec<u16> = current_exe.as_os_str().encode_wide().collect();
+    exe_path.push(0);
+
+    let mut verb_zero: Vec<u16> = std::ffi::OsStr::new("runas").encode_wide().collect();
+    verb_zero.push(0);
+
+    unsafe {
+        ShellExecuteW(
+            None,
+            windows::core::PCWSTR::from_raw(verb_zero.as_ptr()),
+            windows::core::PCWSTR::from_raw(exe_path.as_ptr()),
+            None,
+            None,
+            SW_SHOWDEFAULT,
+        );
+    }
+
+    std::process::exit(0);
 }
 
 #[cfg(test)]

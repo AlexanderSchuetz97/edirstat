@@ -184,6 +184,16 @@ impl GuiApp {
         #[cfg(test)]
         let pending_initial_path = None;
 
+        #[cfg(target_os = "windows")]
+        let active_modal = if crate::gui::modals::is_elevated() {
+            None
+        } else {
+            Some(ActiveModal::AdminWarning)
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let active_modal = None;
+
         let app = Self {
             shared_state,
             traversal_engine,
@@ -211,7 +221,7 @@ impl GuiApp {
             duplicate_waste_chart: stats::duplicate_waste::DuplicateWasteChart::new(),
             delete_confirm_checked: false,
             delete_node_idx: None,
-            active_modal: None,
+            active_modal,
             current_scan_path: None,
             scan_start_time: None,
             total_scan_duration: None,
