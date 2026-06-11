@@ -1010,6 +1010,11 @@ impl GuiApp {
                                 ui.add_space(8.0);
 
                                 ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).strong().color(ui.visuals().strong_text_color()));
+                                #[cfg(feature = "online")]
+                                {
+                                    ui.add_space(4.0);
+                                    self.draw_update_check_ui(ui);
+                                }
                                 ui.add_space(8.0);
                                 ui.separator();
                                 ui.add_space(8.0);
@@ -1284,6 +1289,71 @@ impl GuiApp {
 
             state.is_scanning.store(false, Ordering::SeqCst);
         });
+    }
+}
+
+#[cfg(feature = "online")]
+impl GuiApp {
+    fn draw_update_check_ui(&mut self, ui: &mut egui::Ui) {
+        let check_result = self.update_checker.read_or_request(|| async {
+            let client = reqwest::Client::builder()
+                .user_agent("edirstat-update-checker")
+                .build()
+                .map_err(|e| e.to_string())?;
+
+            let response = client
+                .get("https://github.com/xangelix/edirstat/releases/latest")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let final_url = response.url();
+            let tag = final_url
+                .path_segments()
+                .and_then(|mut segments| segments.next_back())
+                .ok_or_else(|| "Invalid release URL structure".to_string())?;
+
+            let latest_version_str = tag.trim_start_matches('v');
+            let latest_version = semver::Version::parse(latest_version_str)
+                .map_err(|e| format!("Failed to parse latest version '{tag}': {e}"))?;
+
+            let current_version_str = env!("CARGO_PKG_VERSION");
+            let current_version = semver::Version::parse(current_version_str).map_err(|e| {
+                format!("Failed to parse current version '{current_version_str}': {e}")
+            })?;
+
+            if latest_version > current_version && latest_version.pre.is_empty() {
+                Ok(Some(tag.to_string()))
+            } else {
+                Ok(None)
+            }
+        });
+
+        match check_result {
+            None => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.small("Checking for updates...");
+                });
+            }
+            Some(Ok(Some(new_version))) => {
+                ui.horizontal(|ui| {
+                    ui.colored_label(theme::BUTTON_ORANGE, "✨");
+                    ui.hyperlink_to(
+                        egui::RichText::new(format!("New version {new_version} available!"))
+                            .color(theme::BUTTON_ORANGE)
+                            .strong(),
+                        "https://github.com/xangelix/edirstat/releases/latest",
+                    );
+                });
+            }
+            Some(Ok(None)) => {
+                ui.weak("You are up to date");
+            }
+            Some(Err(err)) => {
+                ui.weak(format!("Update check failed: {err}"));
+            }
+        }
     }
 }
 

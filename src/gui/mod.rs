@@ -128,6 +128,9 @@ pub struct GuiApp {
     pub(crate) hovered_node_idx: Option<u32>,
     pub(crate) last_rendered_snapshot_ptr: usize,
     pub(crate) last_extension_stats_ptr: usize,
+
+    #[cfg(feature = "online")]
+    pub(crate) update_checker: egui_async::Bind<Option<String>, String>,
 }
 
 impl GuiApp {
@@ -244,6 +247,9 @@ impl GuiApp {
             hovered_node_idx: None,
             last_rendered_snapshot_ptr: 0,
             last_extension_stats_ptr: 0,
+
+            #[cfg(feature = "online")]
+            update_checker: egui_async::Bind::default(),
         };
 
         #[cfg(test)]
@@ -303,6 +309,9 @@ impl GuiApp {
         self.scroll_to_selected = false;
         self.last_rendered_snapshot_ptr = 0;
         self.last_extension_stats_ptr = 0;
+
+        #[cfg(feature = "online")]
+        self.update_checker.clear();
     }
 
     /// Safely retrieves the single selected node index (if exactly one is selected)
@@ -584,6 +593,11 @@ impl GuiApp {
 }
 
 impl eframe::App for GuiApp {
+    #[cfg(feature = "online")]
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.plugin_or_default::<egui_async::EguiAsyncPlugin>();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui_extras::install_image_loaders(ctx);
     }
