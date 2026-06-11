@@ -1,7 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use compact_str::CompactString;
+use xgx_intern::{ArenaString, Interner};
 
 pub const NO_INDEX: u32 = u32::MAX;
 pub const NO_EXTENSION: &str = "(no extension)";
@@ -147,57 +148,28 @@ impl FileNode {
 
 #[derive(Debug, Clone, Default)]
 pub struct StringPool {
-    /// Tightly packed byte array containing all string data sequentially
-    pub data: Vec<u8>,
-    /// Offsets and lengths of strings, indexed by `StringId`
-    pub offsets: Vec<StringOffset>,
-    /// Hash map for deduplicating newly encountered strings during scan
-    pub lookup: HashMap<CompactString, StringId>,
-}
-
-#[derive(Debug, Copy, Clone, Pod, Zeroable)]
-#[repr(C)]
-pub struct StringOffset {
-    pub offset: u32,
-    pub len: u32,
+    /// High-performance interner managing string deduplication and storage
+    pub interner: Interner<ArenaString, ahash::RandomState, u32>,
 }
 
 impl StringPool {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            interner: Interner::new(ahash::RandomState::new()),
+        }
     }
 
     pub fn get_or_insert(&mut self, s: &[u8]) -> StringId {
-        // Convert slice to helper representation for lookup
         let s_str = std::str::from_utf8(s).unwrap_or("");
-        if let Some(&id) = self.lookup.get(s_str) {
-            return id;
-        }
-
-        let offset = self.data.len() as u32;
-        let len = s.len() as u32;
-        self.data.extend_from_slice(s);
-
-        let id = StringId(self.offsets.len() as u32);
-        self.offsets.push(StringOffset { offset, len });
-
-        // CompactString will store the key inline if it's under 24 bytes
-        let compact_key = CompactString::new(s_str);
-        self.lookup.insert(compact_key, id);
-        id
+        // Performs an allocation-free check. Clones/creates an ArenaString only on a cache miss.
+        let handle = self.interner.intern_ref(s_str).unwrap_or(0);
+        StringId(handle)
     }
 
     #[must_use]
     pub fn get(&self, id: StringId) -> Option<&str> {
-        let offset_info = self.offsets.get(id.0 as usize)?;
-        let start = offset_info.offset as usize;
-        let end = start + offset_info.len as usize;
-        if end <= self.data.len() {
-            std::str::from_utf8(&self.data[start..end]).ok()
-        } else {
-            None
-        }
+        self.interner.resolve(id.0).map(ArenaString::as_str)
     }
 }
 

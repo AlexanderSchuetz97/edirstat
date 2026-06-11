@@ -1,9 +1,9 @@
-use std::{fs::File, io::Write, path::Path};
+use std::{fs::File, io::Write, path::Path, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
 use memmap2::MmapOptions;
 
-use super::arena::{FileNode, StringId, StringOffset, StringPool};
+use super::arena::{FileNode, StringPool};
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -51,16 +51,24 @@ pub fn save_snapshot(
 ) -> Result<(), crate::EdirstatError> {
     let mut file = File::create(path)?;
 
+    // Calculate offsets by exporting the interner
+    let (arena_string, offsets) = string_pool.interner.clone().export_arena().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Interner handle overflow during export",
+        )
+    })?;
+
     // Calculate offsets
     let header_size = 32u64;
     let nodes_size = std::mem::size_of_val(nodes) as u64;
     let string_pool_offset = header_size + nodes_size;
 
     // We will write the string pool as:
-    // [ offsets_count: u64 ] [ StringOffset array ] [ bytes_count: u64 ] [ raw string pool bytes ]
-    let offsets_count = string_pool.offsets.len() as u64;
-    let offsets_size = (string_pool.offsets.len() * std::mem::size_of::<StringOffset>()) as u64;
-    let bytes_count = string_pool.data.len() as u64;
+    // [ offsets_count: u64 ] [ u32 start offsets array ] [ bytes_count: u64 ] [ raw string pool bytes ]
+    let offsets_count = offsets.len() as u64;
+    let offsets_size = (offsets.len() * std::mem::size_of::<u32>()) as u64;
+    let bytes_count = arena_string.len() as u64;
     let string_pool_length = 8 + offsets_size + 8 + bytes_count;
 
     // Create header with version 2
@@ -81,9 +89,9 @@ pub fn save_snapshot(
 
     // Write string pool components
     file.write_all(&offsets_count.to_le_bytes())?;
-    file.write_all(bytemuck::cast_slice(&string_pool.offsets))?;
+    file.write_all(bytemuck::cast_slice(&offsets))?;
     file.write_all(&bytes_count.to_le_bytes())?;
-    file.write_all(&string_pool.data)?;
+    file.write_all(arena_string.as_bytes())?;
 
     file.sync_all()?;
     Ok(())
@@ -130,11 +138,11 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
     offset_count_bytes.copy_from_slice(&sp_slice[0..8]);
     let offsets_count = u64::from_le_bytes(offset_count_bytes) as usize;
 
-    // Parse StringOffset array
+    // Parse u32 offsets array
     let offsets_start = 8;
-    let offsets_end = offsets_start + offsets_count * std::mem::size_of::<StringOffset>();
+    let offsets_end = offsets_start + offsets_count * std::mem::size_of::<u32>();
     let offsets_bytes = &sp_slice[offsets_start..offsets_end];
-    let offsets: &[StringOffset] = bytemuck::cast_slice(offsets_bytes);
+    let offsets: &[u32] = bytemuck::cast_slice(offsets_bytes);
 
     // Parse bytes count (8 bytes)
     let mut bytes_count_bytes = [0u8; 8];
@@ -146,22 +154,23 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
     let raw_bytes_end = raw_bytes_start + bytes_count;
     let raw_bytes = &sp_slice[raw_bytes_start..raw_bytes_end];
 
-    // Reconstruct StringPool
-    let mut string_pool = StringPool::new();
-    string_pool.data = raw_bytes.to_vec();
-    string_pool.offsets = offsets.to_vec();
+    // Reconstruct the interner allocation-free
+    let arena_data: Arc<str> = Arc::from(std::str::from_utf8(raw_bytes).unwrap_or(""));
+    let mut interner = xgx_intern::Interner::new(ahash::RandomState::new());
 
-    // Populate lookup for completeness (if they want to traverse later)
-    for (i, &offset) in string_pool.offsets.iter().enumerate() {
-        let start = offset.offset as usize;
-        let end = start + offset.len as usize;
-        if end <= string_pool.data.len() {
-            let slice = &string_pool.data[start..end];
-            let key = compact_str::CompactString::from_utf8_lossy(slice);
-            string_pool.lookup.insert(key, StringId(i as u32));
-        }
+    for i in 0..offsets.len() - 1 {
+        let offset = offsets[i];
+        let len = offsets[i + 1] - offset;
+        let shared_str = xgx_intern::ArenaString::Shared {
+            arena: arena_data.clone(),
+            offset,
+            len,
+        };
+        // Rebuilds the lookup map without allocating any heap memory for the keys
+        let _ = interner.intern_owned(shared_str);
     }
 
+    let string_pool = StringPool { interner };
     let arena = PersistentArena::new(mmap, node_count);
 
     Ok((arena, string_pool))

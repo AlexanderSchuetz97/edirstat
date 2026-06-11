@@ -1130,6 +1130,7 @@ dependencies = [
  "trash",
  "windows 0.62.2",
  "winresource",
+ "xgx_intern",
 ]
 
 [[package]]
@@ -5835,6 +5836,17 @@ name = "xcursor"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bec9e4a500ca8864c5b47b8b482a73d62e4237670e5b5f1d6b9e3cae50f28f2b"
+
+[[package]]
+name = "xgx_intern"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55d40cd4fe65bf9cb60401cc5c8f442bc2f212f19768a12b13cbaf6e9bc18220"
+dependencies = [
+ "compact_str",
+ "indexmap",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "xkbcommon-dl"
