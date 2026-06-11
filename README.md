@@ -115,6 +115,8 @@ You can also pass a directory path as a positional argument to automatically lau
 6. **Context Actions:**
    Right-click any item in the left-hand explorer to open a context menu.
    - **Open in File Manager:** Launches your operating system's default file browser (Explorer, Finder, or Files) at the selected path.
+   - **Copy Name:** Copies the name of the selected folder or file to the system clipboard.
+   - **Copy Path:** Copies the absolute path of the selected folder or file to the system clipboard.
    - **Delete (Permanent):** Opens a safety dialog to permanently delete the target path from your disk.
 
 ---
