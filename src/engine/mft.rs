@@ -683,7 +683,8 @@ pub fn try_scan_mft(
 /// Resolves the Windows partition volume path from a standard file path
 fn get_volume_path(path: &Path) -> Option<String> {
     let path_str = path.to_string_lossy();
-    let mut chars = path_str.chars();
+    let trimmed = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    let mut chars = trimmed.chars();
     if let Some(drive) = chars.next()
         && chars.next() == Some(':')
         && drive.is_ascii_alphabetic()
