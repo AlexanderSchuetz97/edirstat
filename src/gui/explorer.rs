@@ -1747,8 +1747,22 @@ pub fn compare_nodes_by_column(
             // Sort by Size
             node_a.size.cmp(&node_b.size)
         }
-        3..=5 => {
-            // Sort by Items / Files / Subdirs counts
+        3 => {
+            // Sort by Items (Files + Subdirectories)
+            let items_a = if node_a.is_directory() {
+                node_a.file_count + *snapshot.dir_counts.get(a).unwrap_or(&0)
+            } else {
+                0
+            };
+            let items_b = if node_b.is_directory() {
+                node_b.file_count + *snapshot.dir_counts.get(b).unwrap_or(&0)
+            } else {
+                0
+            };
+            items_a.cmp(&items_b)
+        }
+        4 => {
+            // Sort by Files count
             let files_a = if node_a.is_directory() {
                 node_a.file_count
             } else {
@@ -1760,6 +1774,20 @@ pub fn compare_nodes_by_column(
                 0
             };
             files_a.cmp(&files_b)
+        }
+        5 => {
+            // Sort by Subdirectories count
+            let subdirs_a = if node_a.is_directory() {
+                *snapshot.dir_counts.get(a).unwrap_or(&0)
+            } else {
+                0
+            };
+            let subdirs_b = if node_b.is_directory() {
+                *snapshot.dir_counts.get(b).unwrap_or(&0)
+            } else {
+                0
+            };
+            subdirs_a.cmp(&subdirs_b)
         }
         6 => {
             // Sort by Created timestamp
