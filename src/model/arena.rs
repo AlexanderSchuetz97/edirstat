@@ -346,23 +346,7 @@ impl EntryMetadata {
             .accessed()
             .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
 
-        #[cfg(unix)]
-        let file_id = {
-            use std::os::unix::fs::MetadataExt;
-            (metadata.dev(), metadata.ino())
-        };
-
-        #[cfg(windows)]
-        let file_id = {
-            use std::os::windows::fs::MetadataExt;
-            (
-                metadata.volume_serial_number().unwrap_or(0) as u64,
-                metadata.file_index().unwrap_or(0),
-            )
-        };
-
-        #[cfg(not(any(unix, windows)))]
-        let file_id = (0, 0);
+        let file_id = crate::engine::traversal::get_file_id(&metadata);
 
         Some(Self {
             name,
