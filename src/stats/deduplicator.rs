@@ -358,9 +358,9 @@ pub fn run_deduplication(
     progress.set_total(0); // Indeterminate spinner initially
     progress.set_pos(0);
 
-    let mut expected_timestamps = HashMap::new();
+    // Initial rapid grouping purely by size
     let mut size_groups: HashMap<u64, Vec<u32>, ahash::RandomState> =
-        HashMap::with_capacity_and_hasher(8, ahash::RandomState::new());
+        HashMap::with_capacity_and_hasher(512, ahash::RandomState::new());
 
     for (idx, node) in snapshot.nodes.iter().enumerate() {
         if is_cancelled() {
@@ -376,21 +376,6 @@ pub fn run_deduplication(
             continue;
         }
 
-        let path = snapshot.get_full_path(idx as u32);
-        if is_excluded_path(&path, config.ignore_system, config.ignore_hidden) {
-            continue;
-        }
-
-        // Periodically show filenames in the loader thread
-        if idx % 1000 == 0 {
-            progress.set_item(path.clone());
-        }
-
-        expected_timestamps.insert(
-            idx as u32,
-            (node.modified_timestamp, node.created_timestamp),
-        );
-
         size_groups.entry(size).or_default().push(idx as u32);
     }
 
@@ -400,18 +385,71 @@ pub fn run_deduplication(
         return;
     }
 
-    // Filter size groups to those with duplicates (size >= 2)
-    let mut current_groups: Vec<DuplicateGroup> = size_groups
-        .into_iter()
+    // Identify candidate size groups containing duplicates
+    let candidate_groups_count = size_groups
+        .iter()
         .filter(|(_, nodes)| nodes.len() >= 2)
-        .map(|(size, nodes)| DuplicateGroup {
-            size,
-            nodes,
-            file_ids: Vec::new(),
-        })
-        .collect();
+        .count();
+    progress.set_name("Phase 1/7: Filtering exclusions on duplicate candidates...");
+    progress.set_total(candidate_groups_count as u64);
+    progress.set_pos(0);
 
-    // Sort descending by size to present largest first
+    let mut expected_timestamps = HashMap::with_capacity_and_hasher(
+        (snapshot.nodes.len() / 10).max(16), // Heuristic estimate
+        ahash::RandomState::new(),
+    );
+    let mut current_groups = Vec::new();
+    let mut progress_counter = 0;
+
+    // Filter candidate size groups through path exclusion checks
+    for (size, nodes) in size_groups {
+        if is_cancelled() {
+            break;
+        }
+
+        if nodes.len() < 2 {
+            continue;
+        }
+
+        progress_counter += 1;
+        if progress_counter % 50 == 0 || progress_counter == candidate_groups_count {
+            progress.set_pos(progress_counter as u64);
+        }
+
+        let mut filtered_nodes = Vec::new();
+        for node_idx in nodes {
+            let path = snapshot.get_full_path(node_idx);
+
+            // Throttle UI update of processed files
+            if node_idx % 100 == 0 {
+                progress.set_item(path.clone());
+            }
+
+            if is_excluded_path(&path, config.ignore_system, config.ignore_hidden) {
+                continue;
+            }
+
+            let node = &snapshot.nodes[node_idx as usize];
+            expected_timestamps.insert(node_idx, (node.modified_timestamp, node.created_timestamp));
+            filtered_nodes.push(node_idx);
+        }
+
+        if filtered_nodes.len() >= 2 {
+            current_groups.push(DuplicateGroup {
+                size,
+                nodes: filtered_nodes,
+                file_ids: Vec::new(),
+            });
+        }
+    }
+
+    if is_cancelled() {
+        progress.set_error(Some("Scan was cancelled."));
+        progress.finish();
+        return;
+    }
+
+    // Sort descending by size to process larger files first
     current_groups.sort_by_key(|g| std::cmp::Reverse(g.size));
 
     update_results(current_groups.clone());
