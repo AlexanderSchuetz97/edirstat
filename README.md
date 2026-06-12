@@ -26,7 +26,7 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is built from
 
 ## 📽️ Demo Video
 
-<https://github.com/user-attachments/assets/de96a247-1066-4ddd-8a0c-e38053c6ebe9>
+<https://github.com/user-attachments/assets/0d50ca96-ba2d-4d3f-9792-ea49c206e37b>
 
 ---
 
