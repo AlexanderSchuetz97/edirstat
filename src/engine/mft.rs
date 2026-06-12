@@ -64,8 +64,8 @@ fn apply_fixup(buffer: &mut [u8]) -> bool {
     if &buffer[0..4] != b"FILE" && &buffer[0..4] != b"INDX" {
         return false;
     }
-    let update_seq_offset = u16::from_le_bytes(buffer[4..6].try_into().unwrap_or([0; 2])) as usize;
-    let update_seq_count = u16::from_le_bytes(buffer[6..8].try_into().unwrap_or([0; 2])) as usize;
+    let update_seq_offset = u16::from_le_bytes([buffer[4], buffer[5]]) as usize;
+    let update_seq_count = u16::from_le_bytes([buffer[6], buffer[7]]) as usize;
 
     if update_seq_offset + update_seq_count * 2 > buffer.len() {
         return false;
