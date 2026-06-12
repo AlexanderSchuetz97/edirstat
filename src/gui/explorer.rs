@@ -212,48 +212,7 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
         ascending: bool,
     ) -> Result<(), TableError> {
         active_rows.sort_by(|&a, &b| {
-            let node_a = &self.snapshot.nodes[a];
-            let node_b = &self.snapshot.nodes[b];
-
-            let cmp = match col_index {
-                0 => {
-                    // Sort by Name
-                    let name_a = self.snapshot.string_pool.get(node_a.name_id).unwrap_or("");
-                    let name_b = self.snapshot.string_pool.get(node_b.name_id).unwrap_or("");
-                    name_a.cmp(name_b)
-                }
-                2 => {
-                    // Sort by Size
-                    node_a.size.cmp(&node_b.size)
-                }
-                3..=5 => {
-                    // Sort by Items / Files / Subdirs counts
-                    let files_a = if node_a.is_directory() {
-                        node_a.file_count
-                    } else {
-                        0
-                    };
-                    let files_b = if node_b.is_directory() {
-                        node_b.file_count
-                    } else {
-                        0
-                    };
-                    files_a.cmp(&files_b)
-                }
-                6 => {
-                    // Sort by Created
-                    node_a.created_timestamp.cmp(&node_b.created_timestamp)
-                }
-                7 => {
-                    // Sort by Last Modified
-                    node_a.modified_timestamp.cmp(&node_b.modified_timestamp)
-                }
-                _ => {
-                    // Fallback (Percentage, etc.)
-                    node_a.size.cmp(&node_b.size)
-                }
-            };
-
+            let cmp = compare_nodes_by_column(self.snapshot, col_index, a, b);
             if ascending { cmp } else { cmp.reverse() }
         });
 
@@ -490,47 +449,7 @@ impl GuiApp {
             let sort_state = self.table_state.get_sort_state();
             if let Some((sort_col, sort_up)) = sort_state {
                 sorted_child_indices.sort_by(|&a, &b| {
-                    let node_a = &snapshot.nodes[a as usize];
-                    let node_b = &snapshot.nodes[b as usize];
-
-                    let cmp = match sort_col {
-                        0 => {
-                            // Sort by Name
-                            let name_a = snapshot.string_pool.get(node_a.name_id).unwrap_or("");
-                            let name_b = snapshot.string_pool.get(node_b.name_id).unwrap_or("");
-                            name_a.cmp(name_b)
-                        }
-                        2 => {
-                            // Sort by Size
-                            node_a.size.cmp(&node_b.size)
-                        }
-                        3..=5 => {
-                            // Sort by Items / Files / Subdirs counts
-                            let files_a = if node_a.is_directory() {
-                                node_a.file_count
-                            } else {
-                                0
-                            };
-                            let files_b = if node_b.is_directory() {
-                                node_b.file_count
-                            } else {
-                                0
-                            };
-                            files_a.cmp(&files_b)
-                        }
-                        6 => {
-                            // Sort by Created
-                            node_a.created_timestamp.cmp(&node_b.created_timestamp)
-                        }
-                        7 => {
-                            // Sort by Last Modified
-                            node_a.modified_timestamp.cmp(&node_b.modified_timestamp)
-                        }
-                        _ => {
-                            // Fallback to Size Descending
-                            node_b.size.cmp(&node_a.size)
-                        }
-                    };
+                    let cmp = compare_nodes_by_column(snapshot, sort_col, a as usize, b as usize);
                     if sort_up { cmp } else { cmp.reverse() }
                 });
             } else {
@@ -1803,4 +1722,56 @@ fn draw_action_button(
         .inner
     })
     .inner
+}
+
+/// Compares two arena nodes based on the selected column index and metadata.
+#[inline]
+#[must_use]
+pub fn compare_nodes_by_column(
+    snapshot: &FileArenaSnapshot,
+    col_index: usize,
+    a: usize,
+    b: usize,
+) -> std::cmp::Ordering {
+    let node_a = &snapshot.nodes[a];
+    let node_b = &snapshot.nodes[b];
+
+    match col_index {
+        0 => {
+            // Sort by Name
+            let name_a = snapshot.string_pool.get(node_a.name_id).unwrap_or("");
+            let name_b = snapshot.string_pool.get(node_b.name_id).unwrap_or("");
+            name_a.cmp(name_b)
+        }
+        2 => {
+            // Sort by Size
+            node_a.size.cmp(&node_b.size)
+        }
+        3..=5 => {
+            // Sort by Items / Files / Subdirs counts
+            let files_a = if node_a.is_directory() {
+                node_a.file_count
+            } else {
+                0
+            };
+            let files_b = if node_b.is_directory() {
+                node_b.file_count
+            } else {
+                0
+            };
+            files_a.cmp(&files_b)
+        }
+        6 => {
+            // Sort by Created timestamp
+            node_a.created_timestamp.cmp(&node_b.created_timestamp)
+        }
+        7 => {
+            // Sort by Last Modified timestamp
+            node_a.modified_timestamp.cmp(&node_b.modified_timestamp)
+        }
+        _ => {
+            // Fallback (Percentage, etc.)
+            node_a.size.cmp(&node_b.size)
+        }
+    }
 }
