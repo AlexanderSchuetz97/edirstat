@@ -213,9 +213,10 @@ impl FileArenaSnapshot {
         let first = parts[0];
         if first.starts_with('/') || first.contains(':') {
             let mut path = first.to_string();
+            let separator = if first.contains('\\') { '\\' } else { '/' };
             for part in &parts[1..] {
                 if !path.ends_with('/') && !path.ends_with('\\') {
-                    path.push('/');
+                    path.push(separator);
                 }
                 path.push_str(part);
             }
