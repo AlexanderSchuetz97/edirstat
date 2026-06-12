@@ -205,13 +205,13 @@ The engine remains hardlink-aware, allowing it to accurately differentiate betwe
 
 ## Benchmarks
 
-### Vs `WinDirStat`
+### Vs `WinDirStat` (same video as above)
 
 A dense Windows primary drive.
 
 `NVMe PCIe Gen3 [ntfs]`
 
-(same video as above)
+**26.9x speedup**
 
 <https://github.com/user-attachments/assets/aab8ea46-4bf7-4ac5-8d09-cdbf73d8a607>
 
