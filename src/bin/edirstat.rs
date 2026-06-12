@@ -86,6 +86,9 @@ fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Er
 }
 
 fn main() -> eframe::Result {
+    #[cfg(feature = "profile-tracy")]
+    let _client = tracy_client::Client::start();
+
     let args = Args::parse();
 
     if args.benchmark {

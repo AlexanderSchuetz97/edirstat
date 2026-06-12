@@ -997,6 +997,12 @@ impl eframe::App for GuiApp {
 
         // Render any active modals
         self.render_modals(&ctx, &snapshot);
+
+        #[cfg(feature = "profile-tracy")]
+        {
+            ui.ctx().request_repaint();
+            tracy_client::frame_mark();
+        }
     }
 }
 
