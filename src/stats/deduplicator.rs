@@ -10,11 +10,17 @@ use std::{
 };
 
 use prettier_bytes::ByteFormatter;
-
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
 
 pub const HASH_BLOCK_SIZE: usize = 4096; // 4KB hashing block size
 pub const MULTI_RANGE_SPREAD_SIZE: u64 = 100 * 1024 * 1024; // 100MB spread size for multi-range checks
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashResult {
+    Success([u8; 32]),
+    Skipped,
+    Error,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DuplicateGroup {
@@ -322,7 +328,7 @@ fn calculate_full_hash(
     Some(hasher.finalize().into())
 }
 
-pub type HashFn = dyn Fn(&str, u64, i64, i64) -> Option<[u8; 32]> + Send + Sync;
+pub type HashFn = dyn Fn(&str, u64, i64, i64) -> HashResult + Send + Sync;
 
 /// Main execution routine of the background deduplication runner
 #[allow(clippy::needless_pass_by_value)]
@@ -452,13 +458,16 @@ pub fn run_deduplication(
                     let &(expected_mod, expected_cre) =
                         expected_timestamps.get(&node_idx).unwrap_or(&(0, 0));
 
-                    if let Some(hash) = hash_fn(&path, group.size, expected_mod, expected_cre) {
-                        hash_subgroups.entry(hash).or_default().push(node_idx);
-                    } else if let Ok(meta) = std::fs::metadata(&path)
-                        && meta.len() == group.size
-                    {
-                        // Check if file is still there and unchanged on disk
-                        failed_or_skipped.push(node_idx);
+                    match hash_fn(&path, group.size, expected_mod, expected_cre) {
+                        HashResult::Success(hash) => {
+                            hash_subgroups.entry(hash).or_default().push(node_idx);
+                        }
+                        HashResult::Skipped => {
+                            failed_or_skipped.push(node_idx);
+                        }
+                        HashResult::Error => {
+                            // Completely discard target nodes containing structural or reading errors
+                        }
                     }
                 }
 
@@ -502,6 +511,7 @@ pub fn run_deduplication(
     // --- Phase 2: Prefix Hashing ---
     let prefix_hash_fn = |path: &str, _size: u64, expected_mod: i64, expected_cre: i64| {
         calculate_hash_at_range(path, 0, HASH_BLOCK_SIZE, expected_mod, expected_cre)
+            .map_or(HashResult::Error, HashResult::Success)
     };
     let Some(groups) = run_hashing_phase(
         current_groups,
@@ -519,7 +529,7 @@ pub fn run_deduplication(
     // --- Phase 3: Midpoint Hashing ---
     let midpoint_hash_fn = |path: &str, size: u64, expected_mod: i64, expected_cre: i64| {
         if size <= (HASH_BLOCK_SIZE * 2) as u64 {
-            return None;
+            return HashResult::Skipped;
         }
         let mid = size / 2;
         let start_offset = mid.saturating_sub(HASH_BLOCK_SIZE as u64 / 2);
@@ -530,6 +540,7 @@ pub fn run_deduplication(
             expected_mod,
             expected_cre,
         )
+        .map_or(HashResult::Error, HashResult::Success)
     };
     let Some(groups) = run_hashing_phase(
         current_groups,
@@ -547,7 +558,7 @@ pub fn run_deduplication(
     // --- Phase 4: Suffix Hashing ---
     let suffix_hash_fn = |path: &str, size: u64, expected_mod: i64, expected_cre: i64| {
         if size <= HASH_BLOCK_SIZE as u64 {
-            return None;
+            return HashResult::Skipped;
         }
         let start_offset = size - HASH_BLOCK_SIZE as u64;
         calculate_hash_at_range(
@@ -557,6 +568,7 @@ pub fn run_deduplication(
             expected_mod,
             expected_cre,
         )
+        .map_or(HashResult::Error, HashResult::Success)
     };
     let Some(groups) = run_hashing_phase(
         current_groups,
@@ -574,9 +586,10 @@ pub fn run_deduplication(
     // --- Phase 5: Multi-Range Hashing ---
     let multi_range_hash_fn = |path: &str, size: u64, expected_mod: i64, expected_cre: i64| {
         if size < MULTI_RANGE_SPREAD_SIZE {
-            return None;
+            return HashResult::Skipped;
         }
         calculate_multi_range_hash(path, size, expected_mod, expected_cre)
+            .map_or(HashResult::Error, HashResult::Success)
     };
     let Some(groups) = run_hashing_phase(
         current_groups,
@@ -594,6 +607,7 @@ pub fn run_deduplication(
     // --- Phase 6: Full Hashing ---
     let full_hash_fn = |path: &str, _size: u64, expected_mod: i64, expected_cre: i64| {
         calculate_full_hash(path, expected_mod, expected_cre)
+            .map_or(HashResult::Error, HashResult::Success)
     };
     let Some(groups) = run_hashing_phase(
         current_groups,
