@@ -227,14 +227,14 @@ To evaluate traversal performance, `edirstat` includes a custom comparison bench
 
 #### Results
 
-Across a diverse suite of storage devices and directory layouts, **eDirStat** consistently exceeds the performance of `QDirStat` in duplicate, delivering a consistent **3.6x to 7.5x speedup** in scan time!
+Across a diverse suite of storage devices and directory layouts, **eDirStat** consistently exceeds the performance of `QDirStat` in duplicate, delivering a consistent **6.0x to 9.6x speedup** in scan time!
 
 Whether crawling highly nested code repositories on high-speed `NVMe` drives, game installations on SATA SSDs, or deep directory trees on enterprise HDDs, `edirstat`'s parallel, work-stealing multithreading model, allows it to remain the fastest disk usage analyzer available.
 
 Key Highlights:
 
-- Up to **7.54x faster** than the `QDirStat` backend writer, especially on SSDs.
-- Achieves a **3.60x speedup** on mechanical HDDs even when processing massive, deeply nested directory paths.
+- Up to **9.60x faster** than the `QDirStat` backend writer, especially on SSDs.
+- Achieves a **6.04x speedup** on mechanical HDDs even when processing massive, deeply nested directory paths.
 - Smoothly scales directory traversal workload across all available CPU threads.
 
 #### System Details
