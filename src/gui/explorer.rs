@@ -1681,7 +1681,7 @@ fn get_unix_metadata(path_str: &str) -> Option<(String, String, String)> {
     // Query UID natively
     let user = unsafe {
         let passwd = libc::getpwuid(uid);
-        if passwd.is_null() {
+        if passwd.is_null() || (*passwd).pw_name.is_null() {
             uid.to_string()
         } else {
             std::ffi::CStr::from_ptr((*passwd).pw_name)
@@ -1693,7 +1693,7 @@ fn get_unix_metadata(path_str: &str) -> Option<(String, String, String)> {
     // Query GID natively
     let group = unsafe {
         let grp = libc::getgrgid(gid);
-        if grp.is_null() {
+        if grp.is_null() || (*grp).gr_name.is_null() {
             gid.to_string()
         } else {
             std::ffi::CStr::from_ptr((*grp).gr_name)
