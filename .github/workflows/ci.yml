@@ -23,6 +23,9 @@ jobs:
       - name: Cache dependencies
         uses: swatinem/rust-cache@v2
 
+      - name: Check typos
+        run: typos
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
