@@ -67,6 +67,10 @@ fn apply_fixup(buffer: &mut [u8]) -> bool {
     let update_seq_offset = u16::from_le_bytes([buffer[4], buffer[5]]) as usize;
     let update_seq_count = u16::from_le_bytes([buffer[6], buffer[7]]) as usize;
 
+    // Hardened bounds checks to prevent overflows and out-of-bounds indexing
+    if update_seq_count == 0 || update_seq_offset + 2 > buffer.len() {
+        return false;
+    }
     if update_seq_offset + update_seq_count * 2 > buffer.len() {
         return false;
     }
@@ -76,8 +80,8 @@ fn apply_fixup(buffer: &mut [u8]) -> bool {
     let mut sector_pos = 512 - 2;
 
     for _ in 1..update_seq_count {
-        if sector_pos + 2 > buffer.len() {
-            break;
+        if sector_pos + 2 > buffer.len() || array_pos + 2 > buffer.len() {
+            return false;
         }
         if [buffer[sector_pos], buffer[sector_pos + 1]] != usn {
             return false;
@@ -105,24 +109,40 @@ fn decode_data_runs(mut data_runs_bytes: &[u8]) -> Vec<DataRun> {
         let len_bytes_count = (header & 0x0F) as usize;
         let offset_bytes_count = ((header & 0xF0) >> 4) as usize;
 
+        // Hardening against integer-overflow on stack allocation sizes
+        if len_bytes_count > 8 || offset_bytes_count > 8 {
+            break;
+        }
+        if len_bytes_count == 0 && offset_bytes_count == 0 {
+            break; // Avoid infinite loops on malformed run headers
+        }
+
         if data_runs_bytes.len() < len_bytes_count + offset_bytes_count {
             break;
         }
 
         let mut len_buf = [0u8; 8];
-        len_buf[..len_bytes_count].copy_from_slice(&data_runs_bytes[..len_bytes_count]);
+        if let Some(slice) = data_runs_bytes.get(..len_bytes_count) {
+            len_buf[..len_bytes_count].copy_from_slice(slice);
+        } else {
+            break;
+        }
         let length_clusters = u64::from_le_bytes(len_buf);
         data_runs_bytes = &data_runs_bytes[len_bytes_count..];
 
         let lcn = if offset_bytes_count > 0 {
             let mut off_buf = [0u8; 8];
-            off_buf[..offset_bytes_count].copy_from_slice(&data_runs_bytes[..offset_bytes_count]);
+            if let Some(slice) = data_runs_bytes.get(..offset_bytes_count) {
+                off_buf[..offset_bytes_count].copy_from_slice(slice);
+            } else {
+                break;
+            }
             let mut offset = i64::from_le_bytes(off_buf);
             let unused_bits = (8 - offset_bytes_count) * 8;
             offset = (offset << unused_bits) >> unused_bits;
             data_runs_bytes = &data_runs_bytes[offset_bytes_count..];
 
-            let current_lcn = previous_lcn + offset;
+            let current_lcn = previous_lcn.wrapping_add(offset);
             previous_lcn = current_lcn;
             Some(current_lcn)
         } else {
@@ -153,6 +173,10 @@ fn parse_attributes(record_data: &[u8]) -> Vec<AttributeHeader<'_>> {
     }
     let first_attr_offset =
         u16::from_le_bytes(record_data[20..22].try_into().unwrap_or([0; 2])) as usize;
+
+    if first_attr_offset >= record_data.len() {
+        return attrs;
+    }
     let mut offset = first_attr_offset;
 
     while offset + 8 <= record_data.len() {
@@ -165,7 +189,9 @@ fn parse_attributes(record_data: &[u8]) -> Vec<AttributeHeader<'_>> {
                 .try_into()
                 .unwrap_or([0; 4]),
         ) as usize;
-        if length == 0 || offset + length > record_data.len() {
+
+        // Hardening: Verify attributes are at least 16 bytes and do not extend past file bounds
+        if length < 16 || offset + length > record_data.len() {
             break;
         }
 
@@ -224,9 +250,14 @@ fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
                     u32::from_le_bytes(attr.payload[16..20].try_into().unwrap_or([0; 4])) as usize;
                 if val_offset + val_len <= attr.payload.len() && val_len >= 66 {
                     let val = &attr.payload[val_offset..val_offset + val_len];
-                    let parent_ref = u64::from_le_bytes(val[0..8].try_into().unwrap_or([0; 8]))
-                        & 0x0000_ffff_ffff_ffff;
-                    let namespace = val[65];
+
+                    let parent_ref_bytes: [u8; 8] = val
+                        .get(0..8)
+                        .and_then(|slice| slice.try_into().ok())
+                        .unwrap_or([0; 8]);
+                    let parent_ref = u64::from_le_bytes(parent_ref_bytes) & 0x0000_ffff_ffff_ffff;
+
+                    let namespace = *val.get(65).unwrap_or(&0);
                     let prio = match namespace {
                         1 => 3, // Win32
                         3 => 2, // Win32AndDos
@@ -234,9 +265,10 @@ fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
                         _ => 0, // Posix
                     };
 
-                    let name_len = val[64] as usize;
-                    if 66 + name_len * 2 <= val.len() {
-                        let name_raw = &val[66..66 + name_len * 2];
+                    let name_len = *val.get(64).unwrap_or(&0) as usize;
+                    if 66 + name_len * 2 <= val.len()
+                        && let Some(name_raw) = val.get(66..66 + name_len * 2)
+                    {
                         let u16_chars: Vec<u16> = name_raw
                             .chunks_exact(2)
                             .map(|c| u16::from_le_bytes([c[0], c[1]]))
@@ -254,8 +286,11 @@ fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
                     }
 
                     if fallback_size == 0 {
-                        fallback_size =
-                            u64::from_le_bytes(val[48..56].try_into().unwrap_or([0; 8]));
+                        let fallback_bytes: [u8; 8] = val
+                            .get(48..56)
+                            .and_then(|slice| slice.try_into().ok())
+                            .unwrap_or([0; 8]);
+                        fallback_size = u64::from_le_bytes(fallback_bytes);
                     }
                 }
             }
@@ -299,8 +334,13 @@ fn reconstruct_path(
     let mut path = PathBuf::new();
     let mut curr = record_id;
     let mut segments = Vec::new();
+    let mut visited = HashSet::new();
 
     while curr != root_record_id {
+        // Prevent infinite loops on corrupted/circular directory reference networks on disk
+        if !visited.insert(curr) {
+            break;
+        }
         if let Some(Some(entry)) = mft_entries.get(curr as usize) {
             segments.push(entry.name.as_str());
             curr = entry.parent_record_id;
@@ -386,9 +426,24 @@ pub fn try_scan_mft(
     let sector_size =
         u16::from_le_bytes(boot_sector[0x0B..0x0D].try_into().unwrap_or([0; 2])) as u64;
     let sectors_per_cluster = boot_sector[0x0D] as u64;
-    let cluster_size = sector_size * sectors_per_cluster;
+
+    let cluster_size = sector_size
+        .checked_mul(sectors_per_cluster)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Cluster size calculation overflowed",
+            )
+        })?;
+
     let mft_lcn = u64::from_le_bytes(boot_sector[0x30..0x38].try_into().unwrap_or([0; 8]));
-    let mft_start_offset = mft_lcn * cluster_size;
+
+    let mft_start_offset = mft_lcn.checked_mul(cluster_size).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "MFT start offset calculation overflowed",
+        )
+    })?;
 
     // 2. Read MFT Record 0 ($MFT)
     let mut mft_record_zero = vec![0u8; MFT_RECORD_SIZE];
@@ -410,11 +465,16 @@ pub fn try_scan_mft(
 
     for attr in mft_zero_attrs {
         if attr.ty == 0x80 && attr.is_non_resident {
+            if attr.payload.len() < 34 {
+                continue;
+            }
             let data_runs_offset =
                 u16::from_le_bytes(attr.payload[32..34].try_into().unwrap_or([0; 2])) as usize;
-            let run_bytes = &attr.payload[data_runs_offset..];
-            mft_runs = decode_data_runs(run_bytes);
-            mft_allocated_len = attr.value_length;
+            if data_runs_offset < attr.payload.len() {
+                let run_bytes = &attr.payload[data_runs_offset..];
+                mft_runs = decode_data_runs(run_bytes);
+                mft_allocated_len = attr.value_length;
+            }
             break;
         }
     }
@@ -428,6 +488,16 @@ pub fn try_scan_mft(
     }
 
     let max_records = mft_allocated_len / MFT_RECORD_SIZE as u64;
+
+    // Hardening: Protect against OOM allocation panics on corrupted volume descriptors
+    if max_records == 0 || max_records > 50_000_000 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "MFT allocation length is invalid or excessively large",
+        )
+        .into());
+    }
+
     let mut mft_entries: Vec<Option<MftEntry>> = Vec::new();
     mft_entries.resize_with(max_records as usize, || None);
 
@@ -468,6 +538,10 @@ pub fn try_scan_mft(
                         continue; // Skip corrupted record signatures
                     }
 
+                    if record_buffer.len() < 40 {
+                        continue;
+                    }
+
                     let flags =
                         u16::from_le_bytes(record_buffer[22..24].try_into().unwrap_or([0; 2]));
                     // Skip deleted/inactive records immediately
@@ -497,16 +571,24 @@ pub fn try_scan_mft(
                                     attr.payload[20..22].try_into().unwrap_or([0; 2]),
                                 ) as usize;
                                 if val_offset + 32 <= attr.payload.len() {
-                                    let std_info = &attr.payload[val_offset..val_offset + 32];
-                                    created = nt_time_to_unix(u64::from_le_bytes(
-                                        std_info[0..8].try_into().unwrap_or([0; 8]),
-                                    ));
-                                    modified = nt_time_to_unix(u64::from_le_bytes(
-                                        std_info[8..16].try_into().unwrap_or([0; 8]),
-                                    ));
-                                    accessed = nt_time_to_unix(u64::from_le_bytes(
-                                        std_info[24..32].try_into().unwrap_or([0; 8]),
-                                    ));
+                                    if let Some(std_info) =
+                                        attr.payload.get(val_offset..val_offset + 32)
+                                    {
+                                        let created_bytes: [u8; 8] =
+                                            std_info[0..8].try_into().unwrap_or([0; 8]);
+                                        created =
+                                            nt_time_to_unix(u64::from_le_bytes(created_bytes));
+
+                                        let modified_bytes: [u8; 8] =
+                                            std_info[8..16].try_into().unwrap_or([0; 8]);
+                                        modified =
+                                            nt_time_to_unix(u64::from_le_bytes(modified_bytes));
+
+                                        let accessed_bytes: [u8; 8] =
+                                            std_info[24..32].try_into().unwrap_or([0; 8]);
+                                        accessed =
+                                            nt_time_to_unix(u64::from_le_bytes(accessed_bytes));
+                                    }
                                     break;
                                 }
                             }
@@ -524,22 +606,24 @@ pub fn try_scan_mft(
                                 virt_id
                             };
 
-                            mft_entries[target_id as usize] = Some(MftEntry {
-                                name: link.name,
-                                size,
-                                parent_record_id: link.parent_ref,
-                                modified_timestamp: modified,
-                                created_timestamp: created,
-                                accessed_timestamp: accessed,
-                                is_dir,
-                                is_symlink: false,
-                                has_attr_list: link.has_attr_list,
-                            });
+                            if (target_id as usize) < mft_entries.len() {
+                                mft_entries[target_id as usize] = Some(MftEntry {
+                                    name: link.name,
+                                    size,
+                                    parent_record_id: link.parent_ref,
+                                    modified_timestamp: modified,
+                                    created_timestamp: created,
+                                    accessed_timestamp: accessed,
+                                    is_dir,
+                                    is_symlink: false,
+                                    has_attr_list: link.has_attr_list,
+                                });
 
-                            children_map
-                                .entry(link.parent_ref)
-                                .or_default()
-                                .push(target_id);
+                                children_map
+                                    .entry(link.parent_ref)
+                                    .or_default()
+                                    .push(target_id);
+                            }
                         }
                     }
                 }
@@ -560,7 +644,7 @@ pub fn try_scan_mft(
         } else {
             // Sparse data run - simply advance indices
             let sparse_records = (run.length_clusters * cluster_size) / MFT_RECORD_SIZE as u64;
-            current_record_id += sparse_records;
+            current_record_id = current_record_id.saturating_add(sparse_records);
         }
     }
 
@@ -613,7 +697,7 @@ pub fn try_scan_mft(
                 }
 
                 let child_local_id = LocalId(local_id_counter);
-                local_id_counter += 1;
+                local_id_counter = local_id_counter.saturating_add(1);
 
                 // Safely update traversed directory atomic counters
                 stats.dirs_scanned.fetch_add(1, Ordering::Relaxed);
