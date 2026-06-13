@@ -395,4 +395,4 @@ Speedup (QDirStat / eDirStat): 6.60x
 
 ## 📝 License
 
-This project is licensed under the [MIT License](https://spdx.org/licenses/MIT).
+This project is licensed under the [MIT License](LICENSE).
