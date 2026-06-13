@@ -1826,4 +1826,55 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
+
+    #[test]
+    fn test_gui_root_name_clean_unc() -> Result<(), egui_table_kit::error::TableError> {
+        use egui_table_kit::operations::TableProvider as _;
+
+        let mut pool = crate::arena::StringPool::new();
+        // A Windows UNC path as the root node name
+        let name_root = pool.get_or_insert(b"\\\\?\\C:\\TestFolder");
+        let nodes = vec![crate::arena::FileNode::new(
+            name_root, None, true, false, 0, 0, 0,
+        )];
+        let dir_counts = crate::arena::precompute_dir_counts(&nodes);
+        let snapshot = FileArenaSnapshot {
+            nodes: Arc::new(crate::arena::NodeStorage::Owned(nodes)),
+            string_pool: Arc::new(pool),
+            dir_counts: Arc::new(dir_counts),
+        };
+
+        // 1. Verify TableProviderWrapper for_selected_rows and for_all_rows
+        let provider = crate::gui::explorer::TableProviderWrapper::new(&snapshot);
+        let mut state = egui_table_kit::state::TableState::new("test_table", 0);
+        state.selected_rows.insert(0);
+
+        let mut row_names = Vec::new();
+        provider.for_selected_rows(&state, &mut |row| {
+            row_names.push(row[0].0.to_string());
+            Ok(())
+        })?;
+        assert_eq!(row_names, vec!["C:\\TestFolder"]);
+
+        let mut all_row_names = Vec::new();
+        provider.for_all_rows(&mut |row| {
+            all_row_names.push(row[0].0.to_string());
+            Ok(())
+        })?;
+        assert_eq!(all_row_names, vec!["C:\\TestFolder"]);
+
+        // 2. Verify row_matches
+        let mut filter = egui_table_kit::filter::Filter::default();
+        filter.search.set_text("Folder");
+        filter.search.open();
+        assert!(provider.row_matches(&state, 0, &[(0, filter.clone())], None));
+
+        // Searching for the UNC prefix should not match if it's stripped
+        let mut filter_unc = egui_table_kit::filter::Filter::default();
+        filter_unc.search.set_text(r"\\?\");
+        filter_unc.search.open();
+        assert!(!provider.row_matches(&state, 0, &[(0, filter_unc)], None));
+
+        Ok(())
+    }
 }

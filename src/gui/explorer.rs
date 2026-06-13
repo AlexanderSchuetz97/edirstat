@@ -56,8 +56,13 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
             if (row_idx as usize) < self.snapshot.nodes.len() {
                 let node = &self.snapshot.nodes[row_idx as usize];
                 let name = self.snapshot.string_pool.get(node.name_id).unwrap_or("");
+                let cleaned_name = if node.parent_opt().is_none() {
+                    crate::model::arena::clean_unc_path(name)
+                } else {
+                    std::borrow::Cow::Borrowed(name)
+                };
                 row_buf.clear();
-                row_buf.push((std::borrow::Cow::Borrowed(name), None));
+                row_buf.push((cleaned_name, None));
                 f(&row_buf)?;
             }
         }
@@ -68,8 +73,13 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
         let mut row_buf = Vec::new();
         for node in self.snapshot.nodes.iter() {
             let name = self.snapshot.string_pool.get(node.name_id).unwrap_or("");
+            let cleaned_name = if node.parent_opt().is_none() {
+                crate::model::arena::clean_unc_path(name)
+            } else {
+                std::borrow::Cow::Borrowed(name)
+            };
             row_buf.clear();
-            row_buf.push((std::borrow::Cow::Borrowed(name), None));
+            row_buf.push((cleaned_name, None));
             f(&row_buf)?;
         }
         Ok(())
@@ -141,7 +151,14 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
 
         for &(col_idx, ref filter) in filters {
             let cell_text = match col_idx {
-                0 => name.to_string(),
+                0 => {
+                    let cleaned_name = if node.parent_opt().is_none() {
+                        crate::model::arena::clean_unc_path(name)
+                    } else {
+                        std::borrow::Cow::Borrowed(name)
+                    };
+                    cleaned_name.into_owned()
+                }
                 1 => {
                     // Percentage
                     let parent_idx = node.parent;
@@ -299,16 +316,24 @@ impl QueryCoordinator {
             for idx in (0..snapshot.nodes.len()).rev() {
                 let node = &snapshot.nodes[idx];
                 let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
+                let cleaned_name = if node.parent_opt().is_none() {
+                    crate::model::arena::clean_unc_path(name)
+                } else {
+                    std::borrow::Cow::Borrowed(name)
+                };
 
                 let self_matches = regex_matcher.as_ref().map_or_else(
                     || {
                         if filter_case_sensitive {
-                            name.contains(search_query)
+                            cleaned_name.contains(search_query)
                         } else {
-                            crate::arena::contains_case_insensitive(name, &search_query_lower)
+                            crate::arena::contains_case_insensitive(
+                                &cleaned_name,
+                                &search_query_lower,
+                            )
                         }
                     },
-                    |re| re.is_match(name),
+                    |re| re.is_match(&cleaned_name),
                 );
 
                 if self_matches {
@@ -1301,6 +1326,12 @@ impl GuiApp {
         let is_dir = node.is_directory();
         let is_sym = node.is_symlink();
 
+        let cleaned_name = if node.parent_opt().is_none() {
+            crate::model::arena::clean_unc_path(name)
+        } else {
+            std::borrow::Cow::Borrowed(name)
+        };
+
         ui.vertical(|ui| {
             // Header with Close Button
             ui.horizontal(|ui| {
@@ -1340,7 +1371,7 @@ impl GuiApp {
                         };
                         ui.label(egui::RichText::new(icon).size(24.0));
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                        ui.label(egui::RichText::new(name).strong().size(14.0));
+                        ui.label(egui::RichText::new(&*cleaned_name).strong().size(14.0));
                     });
                     ui.add_space(8.0);
 

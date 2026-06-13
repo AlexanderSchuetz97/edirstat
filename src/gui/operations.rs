@@ -336,7 +336,12 @@ impl TableOperation for CopyNameOp {
             if (idx as usize) < snapshot.nodes.len() {
                 let node = &snapshot.nodes[idx as usize];
                 let name = snapshot.string_pool.get(node.name_id).unwrap_or("unknown");
-                names.push(name.to_string());
+                let cleaned_name = if node.parent_opt().is_none() {
+                    crate::model::arena::clean_unc_path(name).into_owned()
+                } else {
+                    name.to_string()
+                };
+                names.push(cleaned_name);
             }
         }
 
