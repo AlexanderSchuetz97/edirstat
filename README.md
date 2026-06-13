@@ -1,8 +1,6 @@
 # eDirStat
 
-![eDirStat Logo](assets/img/logo.svg)
-
-![eDirStat Treemap](docs/screenshots/treemap.png)
+![eDirStat Treemap](docs/screenshots/treemap-logo.png)
 
 [![Crates.io](https://img.shields.io/crates/v/edirstat)](https://crates.io/crates/edirstat)
 [![Docs.rs](https://docs.rs/edirstat/badge.svg)](https://docs.rs/edirstat)
