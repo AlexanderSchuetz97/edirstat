@@ -1216,9 +1216,9 @@ dependencies = [
 
 [[package]]
 name = "egui-table-kit"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "007b5a616aa1ce61e6a08e011c3ab4a1e85ed2f683a131801b5d462050e1fffc"
+checksum = "0e8fa8dc10a82fa93f8731a6f17be1a0ca08cb69410aa06d4c84f4275fca7527"
 dependencies = [
  "ahash",
  "bitflags 2.13.0",
