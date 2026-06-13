@@ -27,6 +27,12 @@ All notable changes to **eDirStat** will be documented in this file.
 - **🔄 Root Refresh Support:** Restored the ability to refresh/rescan the root node directly in the directory explorer.
 - **📦 Windows Installer (Inno Setup):** Added support for building proper Windows setup/installer binaries (`.exe` via Inno Setup) in the CI/CD pipeline on every commit.
 - **⚖️ MIT License:** Formally initialized the repository with the MIT License.
+- **🪟 Administrator Restart Modal:** Added a prompt to restart the application as administrator to allow Master File Table (MFT) access on Windows.
+- **ℹ️ Update Checker:** Added an update checker to the "About" modal to easily check for new versions of the application.
+- **🛠️ Tracy Profiling:** Integrated basic support for Tracy-based profiling to assist in performance diagnostics.
+- **🧪 Typos Check CI/CD:** Initialized automated spelling/typos check workflow in the CI/CD pipeline.
+- **📊 Item and Directory Count Sorting:** Added full support for sorting the directory explorer view by item and subdirectory counts.
+- **🚀 Headless Snapshot Mode:** Added a headless command-line mode to run directory scans and automatically save results to a `.edst` snapshot file, bypassing the GUI.
 
 ### Changed
 
@@ -45,8 +51,23 @@ All notable changes to **eDirStat** will be documented in this file.
 - **✏️ Explorer Column Renaming:** Renamed the "Last Modified" column to "Modified" for a cleaner and more compact header layout.
 - **🎨 UI Enhancements:** Improved the table operations buttons styling (removing gray backgrounds for a cleaner look) and styled warning/detail modals with stronger, higher-contrast text.
 - **💾 Persistence Format V2:** Bumped the snapshot persistence header to `v2` to support new metadata features.
-- **📦 Dependency Upgrades:** Upgraded underlying project dependencies, including updating `egui-table-kit` to version `0.1.5`.
+- **📦 Dependency Upgrades:** Upgraded underlying project dependencies, including updating `egui-table-kit` to version `0.2.0`.
 - **🪟 Console-Free Windows Executable:** Configured the application so that the console command window does not spawn when launching the GUI on Windows.
+- **⚡ Internment Migration:** Switched file name storage in the arena to use `xgx_intern` for faster lookup and reduced heap allocations.
+- **📦 Release Build Optimizations:** Enabled Link-Time Optimization (LTO thin), symbol stripping, and restricted codegen-units to 1 for release binaries to minimize executable size and improve performance.
+- **⚡ Linux Explorer Performance:** Cached file permissions details and read owner UIDs/GIDs natively through `libc` to boost explorer rendering speed on Linux.
+- **⚡ Extension Color Caching:** Cached file extension color calculations in the GUI theme to reduce CPU load during rendering.
+- **🎨 Treemap Coloring:** Switched to gamma multiplication for interactive treemap color scaling, yielding smoother visual gradients.
+- **⚡ Mimalloc Integration:** Configured `mimalloc` v3 as the default global allocator to accelerate memory allocations across multi-core systems.
+- **📄 Documentation & Benchmarks:** Updated the README to list speedup results for WinDirStat, include new context menu options, document positional arguments, refresh performance comparison benchmarks, clean up key feature wording, and link the license locally.
+- **🛡️ Persistence Hardening:** Improved overflow protection for memory-mapped persistence files.
+- **🗂️ Platform-Native Path Slashes:** Improved cross-platform path slash handling to ensure correct directory traversal and representation.
+- **🛡️ Treemap Bounds Protection:** Added robust bounds checks and protections when selecting the root node in the interactive treemap.
+- **⚡ Deduplicator Optimizations:** Deferred path string allocations in the deduplicator to minimize heap usage during search.
+- **⚡ Zero-Copy Node Storage:** Restored true zero-copy node storage in the file arena to reduce latency and memory overhead.
+- **🛡️ NTFS MFT Driver Hardening:** Significantly hardened the Windows-native NTFS MFT driver with extra safety checks and bounds validation.
+- **🧹 Walk Context Refactoring:** Refactored the recursive directory scanner context into a unified `WalkCtx` struct for cleaner and safer code.
+- **🐧 Unix Root Scanning Improvements:** Enhanced traversal of the system root on Unix/Linux by automatically filtering out virtual/system directories (such as `/proc`, `/sys`, `/dev`, etc.) and allowing local partition crossing.
 
 ### Fixed
 
@@ -60,6 +81,11 @@ All notable changes to **eDirStat** will be documented in this file.
 - **📝 Clippy Warnings in Docs:** Fixed documentation formatting and naming to eliminate Clippy lints.
 - **♻️ Cache Clearing on Refresh:** Fixed a bug where cached GUI elements were not cleared during a directory refresh or rescan.
 - **🪟 Windows GUI Launching:** Fixed the entry point executable logic to properly apply the Windows GUI subsystem directive.
+- **🪟 UNC Volume Paths:** Resolved an issue where UNC volume paths were not handled correctly in the Windows MFT driver.
+- **🧹 Deduplication Group Validation:** Fixed a bug in the deduplicator where error-prone groups were not disqualified properly.
+- **🌀 Directory Cycling Prevention:** Fixed a potential infinite loop or dir cycling bug during recursive `walk_dir` scanning.
+- **🧪 Test Suite Fixes:** Updated path reconstruction unit tests for Windows drive compatibility.
+- **⏱️ Epoch Formatting Overflow Protection:** Added checks to prevent year overflow in Unix timestamp date/time conversion.
 
 ---
 
