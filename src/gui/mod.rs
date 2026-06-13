@@ -583,7 +583,8 @@ impl GuiApp {
                                         });
                                         for &idx in nodes {
                                             let path = snapshot.get_full_path(idx);
-                                            ui.small(format!("  - {path}"));
+                                            let cleaned_path = crate::model::arena::clean_unc_path(&path);
+                                            ui.small(format!("  - {cleaned_path}"));
                                         }
                                         ui.add_space(4.0);
                                     });
@@ -872,7 +873,9 @@ impl eframe::App for GuiApp {
 
                 if let Some(ref path) = self.current_scan_path {
                     ui.separator();
-                    ui.label(format!("Path: {}", path.display()));
+                    let path_lossy = path.to_string_lossy();
+                    let cleaned_path = crate::model::arena::clean_unc_path(&path_lossy);
+                    ui.label(format!("Path: {cleaned_path}"));
                 }
 
                 // --- Right-Aligned Concurrency Badge ---
@@ -954,7 +957,8 @@ impl eframe::App for GuiApp {
                                 .to_string();
                             ui.strong(size_str);
                             let path_str = snapshot.get_full_path(idx);
-                            ui.label(format!("Selection: {path_str}"));
+                            let cleaned_path = crate::model::arena::clean_unc_path(&path_str);
+                            ui.label(format!("Selection: {cleaned_path}"));
                         }
                     } else if !self.table_state.selected_rows.is_empty() {
                         let total_size: u64 = self

@@ -296,7 +296,8 @@ impl StatComponent for TreemapChart {
             )
             .show(|ui| {
                 ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Extend);
-                ui.label(format!("📁 {path_str}"));
+                let cleaned_path = crate::model::arena::clean_unc_path(&path_str);
+                ui.label(format!("📁 {cleaned_path}"));
                 ui.label(format!("💾 Size: {size_str}"));
             });
         }

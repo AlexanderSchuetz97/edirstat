@@ -662,7 +662,10 @@ impl GuiApp {
                         .to_string();
                     let paths: Vec<String> = idxs
                         .iter()
-                        .map(|&idx| snapshot.get_full_path(idx))
+                        .map(|&idx| {
+                            crate::model::arena::clean_unc_path(&snapshot.get_full_path(idx))
+                                .into_owned()
+                        })
                         .collect();
                     Some(ModalConfig {
                         title: "⚠ PERMANENT DELETION WARNING",
@@ -692,7 +695,10 @@ impl GuiApp {
                         .to_string();
                     let paths: Vec<String> = idxs
                         .iter()
-                        .map(|&idx| snapshot.get_full_path(idx))
+                        .map(|&idx| {
+                            crate::model::arena::clean_unc_path(&snapshot.get_full_path(idx))
+                                .into_owned()
+                        })
                         .collect();
                     Some(ModalConfig {
                         title: "♻ MOVE TO TRASH",
@@ -722,7 +728,10 @@ impl GuiApp {
                         .to_string();
                     let paths = idxs
                         .iter()
-                        .map(|&idx| snapshot.get_full_path(idx))
+                        .map(|&idx| {
+                            crate::model::arena::clean_unc_path(&snapshot.get_full_path(idx))
+                                .into_owned()
+                        })
                         .collect();
                     Some(ModalConfig {
                         title: "⚠ PERMANENT DEDUPLICATION WARNING",
@@ -752,7 +761,10 @@ impl GuiApp {
                         .to_string();
                     let paths = idxs
                         .iter()
-                        .map(|&idx| snapshot.get_full_path(idx))
+                        .map(|&idx| {
+                            crate::model::arena::clean_unc_path(&snapshot.get_full_path(idx))
+                                .into_owned()
+                        })
                         .collect();
                     Some(ModalConfig {
                         title: "♻ MOVE DUPLICATES TO TRASH",
@@ -782,7 +794,10 @@ impl GuiApp {
                         .to_string();
                     let paths = idxs
                         .iter()
-                        .map(|&idx| snapshot.get_full_path(idx))
+                        .map(|&idx| {
+                            crate::model::arena::clean_unc_path(&snapshot.get_full_path(idx))
+                                .into_owned()
+                        })
                         .collect();
                     Some(ModalConfig {
                         title: "🔗 REPLACE DUPLICATES WITH HARDLINKS",
@@ -816,7 +831,10 @@ impl GuiApp {
                         .to_string();
                     let paths = idxs
                         .iter()
-                        .map(|&idx| snapshot.get_full_path(idx))
+                        .map(|&idx| {
+                            crate::model::arena::clean_unc_path(&snapshot.get_full_path(idx))
+                                .into_owned()
+                        })
                         .collect();
                     Some(ModalConfig {
                         title: "🔗 REPLACE DUPLICATES WITH SOFTLINKS",
@@ -885,7 +903,21 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
                                 let path_exists = if cfg.paths.len() == 1 {
-                                    std::path::Path::new(&cfg.paths[0]).exists()
+                                    let raw_path = match self.active_modal {
+                                        Some(ActiveModal::Delete | ActiveModal::Trash) => {
+                                            self.delete_node_indices.first().map_or_else(|| cfg.paths[0].clone(), |&idx| snapshot.get_full_path(idx))
+                                        }
+                                        Some(
+                                            ActiveModal::DeleteDuplicates
+                                            | ActiveModal::TrashDuplicates
+                                            | ActiveModal::HardlinkDuplicates
+                                            | ActiveModal::SoftlinkDuplicates,
+                                        ) => {
+                                            self.delete_duplicates_indices.first().map_or_else(|| cfg.paths[0].clone(), |&idx| snapshot.get_full_path(idx))
+                                        }
+                                        _ => cfg.paths[0].clone(),
+                                    };
+                                    std::path::Path::new(&raw_path).exists()
                                 } else {
                                     true
                                 };

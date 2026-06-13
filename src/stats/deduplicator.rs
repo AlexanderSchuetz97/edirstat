@@ -114,9 +114,12 @@ impl DeduplicationResults {
                     .file_name()
                     .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
 
-                let parent_path = path
-                    .parent()
-                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+                let parent_path = crate::model::arena::clean_unc_path(
+                    &path
+                        .parent()
+                        .map_or_else(String::new, |s| s.to_string_lossy().into_owned()),
+                )
+                .into_owned();
 
                 let node = &snapshot.nodes[node_idx as usize];
 

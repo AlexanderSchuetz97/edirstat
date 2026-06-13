@@ -204,10 +204,11 @@ impl TableOperation for OpenFileManagerOp {
                 path.parent().map_or(path, |p| p)
             };
             match open::that(dir_to_open) {
-                Ok(()) => crate::gui::toast_info(format!(
-                    "Opened in file manager: {}",
-                    dir_to_open.display()
-                )),
+                Ok(()) => {
+                    let path_lossy = dir_to_open.to_string_lossy();
+                    let cleaned_path = crate::model::arena::clean_unc_path(&path_lossy);
+                    crate::gui::toast_info(format!("Opened in file manager: {cleaned_path}"));
+                }
                 Err(e) => crate::gui::toast_error(format!("Failed to open in file manager: {e}")),
             }
         }
@@ -289,7 +290,8 @@ impl TableOperation for CopyPathOp {
         let mut selected: Vec<u32> = ctx.data.selected_rows.iter().collect();
         selected.sort_unstable();
         for idx in selected {
-            paths.push(snapshot.get_full_path(idx));
+            let path_str = snapshot.get_full_path(idx);
+            paths.push(crate::model::arena::clean_unc_path(&path_str).into_owned());
         }
 
         let num_paths = paths.len();

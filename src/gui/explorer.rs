@@ -530,7 +530,12 @@ impl GuiApp {
             ui.label(icon_text);
 
             // Node Name / Label with automatic left-aligned truncation
-            let mut rich_name = egui::RichText::new(name);
+            let cleaned_name = if node.parent_opt().is_none() {
+                crate::model::arena::clean_unc_path(name)
+            } else {
+                std::borrow::Cow::Borrowed(name)
+            };
+            let mut rich_name = egui::RichText::new(&*cleaned_name);
             if self.monospace_paths {
                 rich_name = rich_name.monospace();
             }
@@ -802,7 +807,12 @@ impl GuiApp {
                             };
                             ui.label(icon_text);
 
-                            let mut rich_name = egui::RichText::new(name);
+                            let cleaned_name = if node.parent_opt().is_none() {
+                                crate::model::arena::clean_unc_path(name)
+                            } else {
+                                std::borrow::Cow::Borrowed(name)
+                            };
+                            let mut rich_name = egui::RichText::new(&*cleaned_name);
                             if self.monospace_paths {
                                 rich_name = rich_name.monospace();
                             }
@@ -1510,10 +1520,11 @@ impl GuiApp {
                     // Full Path display and copy
                     ui.weak("Full Path:");
                     let full_path = snapshot.get_full_path(node_idx);
+                    let cleaned_path = crate::model::arena::clean_unc_path(&full_path);
                     ui.horizontal(|ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         ui.label(
-                            egui::RichText::new(&full_path)
+                            egui::RichText::new(&*cleaned_path)
                                 .monospace()
                                 .weak()
                                 .size(10.0),
@@ -1529,7 +1540,7 @@ impl GuiApp {
                             true,
                         );
                         if copy_btn.clicked() {
-                            ui.ctx().copy_text(full_path.clone());
+                            ui.ctx().copy_text(cleaned_path.into_owned());
                         }
 
                         let open_btn = draw_action_button(

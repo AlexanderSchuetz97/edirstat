@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
 use compact_str::CompactString;
@@ -272,6 +272,35 @@ pub fn precompute_dir_counts(nodes: &[FileNode]) -> Vec<u32> {
     counts
 }
 
+#[must_use]
+pub fn clean_unc_path(path: &str) -> Cow<'_, str> {
+    path.strip_prefix(r"\\?\").map_or_else(
+        || {
+            path.strip_prefix(r"//?/")
+                .map_or(Cow::Borrowed(path), |stripped| {
+                    if stripped.len() >= 4
+                        && stripped[..3].eq_ignore_ascii_case("unc")
+                        && (stripped.as_bytes()[3] == b'/' || stripped.as_bytes()[3] == b'\\')
+                    {
+                        Cow::Owned(format!("//{}", &stripped[4..]))
+                    } else {
+                        Cow::Borrowed(stripped)
+                    }
+                })
+        },
+        |stripped| {
+            if stripped.len() >= 4
+                && stripped[..3].eq_ignore_ascii_case("unc")
+                && (stripped.as_bytes()[3] == b'\\' || stripped.as_bytes()[3] == b'/')
+            {
+                Cow::Owned(format!(r"\\{}", &stripped[4..]))
+            } else {
+                Cow::Borrowed(stripped)
+            }
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,6 +488,18 @@ mod tests {
     fn test_contains_case_insensitive_non_ascii() {
         assert!(contains_case_insensitive("Héllö Wörld", "héllö"));
         assert!(!contains_case_insensitive("Héllö Wörld", "hello"));
+    }
+
+    #[test]
+    fn test_clean_unc_path() {
+        assert_eq!(clean_unc_path(r"\\?\C:\Program Files"), r"C:\Program Files");
+        assert_eq!(
+            clean_unc_path(r"\\?\UNC\server\share\file.txt"),
+            r"\\server\share\file.txt"
+        );
+        assert_eq!(clean_unc_path(r"\\?\unc\server\share"), r"\\server\share");
+        assert_eq!(clean_unc_path("/home/tux/test"), "/home/tux/test");
+        assert_eq!(clean_unc_path(r"\\server\share"), r"\\server\share");
     }
 }
 

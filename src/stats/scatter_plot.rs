@@ -198,7 +198,8 @@ impl super::StatComponent for FileAgeSizeScatterChart {
                     )
                     .show(|ui| {
                         ui.style_mut().wrap_mode = Some(eframe::egui::TextWrapMode::Extend);
-                        ui.label(format!("📄 Path: {path_str}"));
+                        let cleaned_path = crate::model::arena::clean_unc_path(&path_str);
+                        ui.label(format!("📄 Path: {cleaned_path}"));
                         ui.label(format!("💾 Size: {size_str}"));
                         ui.label(format!("⏳ Age: {age_days} days unmodified"));
                     });
