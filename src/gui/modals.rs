@@ -52,20 +52,21 @@ fn collect_descendants(nodes: &[crate::arena::FileNode], idx: u32, out: &mut Vec
     }
 }
 
-fn walk_dir(
-    dir_path: &std::path::Path,
-    parent_idx: u32,
-    cloned_nodes: &mut Vec<crate::arena::FileNode>,
-    string_pool: &mut crate::arena::StringPool,
-    last_child_map: &mut Vec<u32>,
-    traversal_stats: &crate::engine::traversal::TraversalStats,
-    dir_idx: u32,
-    ancestors: &mut smallvec::SmallVec<[(u64, u64); 16]>,
-) {
+struct WalkCtx<'a> {
+    cloned_nodes: &'a mut Vec<crate::arena::FileNode>,
+    string_pool: &'a mut crate::arena::StringPool,
+    last_child_map: &'a mut Vec<u32>,
+    traversal_stats: &'a crate::engine::traversal::TraversalStats,
+    ancestors: &'a mut smallvec::SmallVec<[(u64, u64); 16]>,
+}
+
+fn walk_dir(dir_path: &std::path::Path, parent_idx: u32, dir_idx: u32, ctx: &mut WalkCtx<'_>) {
     let Ok(entries) = std::fs::read_dir(dir_path) else {
         return;
     };
-    traversal_stats.dirs_scanned.fetch_add(1, Ordering::SeqCst);
+    ctx.traversal_stats
+        .dirs_scanned
+        .fetch_add(1, Ordering::SeqCst);
 
     for entry_res in entries {
         let Ok(entry) = entry_res else {
@@ -76,59 +77,52 @@ fn walk_dir(
         };
 
         // Cycle Detection
-        if meta.file_id != (0, 0) && ancestors.contains(&meta.file_id) {
+        if meta.file_id != (0, 0) && ctx.ancestors.contains(&meta.file_id) {
             continue;
         }
 
-        let name_id = string_pool.get_or_insert(meta.name.as_bytes());
-        let child_idx = cloned_nodes.len() as u32;
+        let name_id = ctx.string_pool.get_or_insert(meta.name.as_bytes());
+        let child_idx = ctx.cloned_nodes.len() as u32;
 
         let node = crate::arena::FileNode::from_metadata(name_id, Some(parent_idx), &meta);
-        cloned_nodes.push(node);
-        last_child_map.push(crate::arena::NO_INDEX);
+        ctx.cloned_nodes.push(node);
+        ctx.last_child_map.push(crate::arena::NO_INDEX);
 
         // Connect to parent sibling chain
         let p_idx = parent_idx as usize;
-        let last_child = last_child_map[p_idx];
+        let last_child = ctx.last_child_map[p_idx];
         if last_child == crate::arena::NO_INDEX {
-            cloned_nodes[p_idx].first_child = child_idx;
+            ctx.cloned_nodes[p_idx].first_child = child_idx;
         } else {
-            cloned_nodes[last_child as usize].next_sibling = child_idx;
+            ctx.cloned_nodes[last_child as usize].next_sibling = child_idx;
         }
-        last_child_map[p_idx] = child_idx;
+        ctx.last_child_map[p_idx] = child_idx;
 
         if meta.is_dir {
             if meta.file_id != (0, 0) {
-                ancestors.push(meta.file_id);
+                ctx.ancestors.push(meta.file_id);
             }
-            walk_dir(
-                &entry.path(),
-                child_idx,
-                cloned_nodes,
-                string_pool,
-                last_child_map,
-                traversal_stats,
-                dir_idx,
-                ancestors,
-            );
+            walk_dir(&entry.path(), child_idx, dir_idx, ctx);
             if meta.file_id != (0, 0) {
-                ancestors.pop();
+                ctx.ancestors.pop();
             }
         } else {
-            traversal_stats.files_scanned.fetch_add(1, Ordering::SeqCst);
-            traversal_stats
+            ctx.traversal_stats
+                .files_scanned
+                .fetch_add(1, Ordering::SeqCst);
+            ctx.traversal_stats
                 .bytes_scanned
                 .fetch_add(meta.len as usize, Ordering::SeqCst);
 
             // Propagate size and count upwards through parent indices up to dir_idx
             let mut current_idx = Some(parent_idx);
             while let Some(idx) = current_idx {
-                cloned_nodes[idx as usize].size += meta.len;
-                cloned_nodes[idx as usize].file_count += 1;
+                ctx.cloned_nodes[idx as usize].size += meta.len;
+                ctx.cloned_nodes[idx as usize].file_count += 1;
                 if idx == dir_idx {
                     break;
                 }
-                current_idx = cloned_nodes[idx as usize].parent_opt();
+                current_idx = ctx.cloned_nodes[idx as usize].parent_opt();
             }
         }
     }
@@ -1278,16 +1272,14 @@ impl GuiApp {
                 // Reverse so that the root ancestor is first and the target path is last
                 ancestors.reverse();
 
-                walk_dir(
-                    &path,
-                    dir_idx,
-                    &mut cloned_nodes,
-                    &mut string_pool,
-                    &mut last_child_map,
-                    &traversal_stats,
-                    dir_idx,
-                    &mut ancestors, // Pass the tracked ancestors
-                );
+                let mut walk_ctx = WalkCtx {
+                    cloned_nodes: &mut cloned_nodes,
+                    string_pool: &mut string_pool,
+                    last_child_map: &mut last_child_map,
+                    traversal_stats: &traversal_stats,
+                    ancestors: &mut ancestors,
+                };
+                walk_dir(&path, dir_idx, dir_idx, &mut walk_ctx);
 
                 // 3. Now propagate the new size/counts of dir_idx to all its ancestors!
                 let new_size = cloned_nodes[dir_idx as usize].size;
