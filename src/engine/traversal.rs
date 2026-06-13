@@ -38,6 +38,7 @@ pub enum ScanEvent {
         modified_timestamp: i64,
         created_timestamp: i64,
         accessed_timestamp: i64,
+        no_permission: bool,
     },
     FileDiscovered {
         parent_worker_id: u8,
@@ -48,6 +49,11 @@ pub enum ScanEvent {
         modified_timestamp: i64,
         created_timestamp: i64,
         accessed_timestamp: i64,
+        no_permission: bool,
+    },
+    PermissionDenied {
+        worker_id: u8,
+        local_id: LocalId,
     },
 }
 
@@ -290,6 +296,18 @@ fn scan_directory<F>(
 
     // Try reading directory entries
     let Ok(entries) = fs::read_dir(dir_path) else {
+        if let Err(e) = fs::read_dir(dir_path)
+            && e.kind() == std::io::ErrorKind::PermissionDenied
+        {
+            emit_event(
+                ScanEvent::PermissionDenied {
+                    worker_id: task.worker_id,
+                    local_id: parent_local_id,
+                },
+                true,
+                event_tx,
+            );
+        }
         return;
     };
 
@@ -343,6 +361,7 @@ fn scan_directory<F>(
                     modified_timestamp: meta.modified_timestamp,
                     created_timestamp: meta.created_timestamp,
                     accessed_timestamp: meta.accessed_timestamp,
+                    no_permission: meta.no_permission,
                 },
                 true,
                 event_tx,
@@ -379,6 +398,7 @@ fn scan_directory<F>(
                     modified_timestamp: meta.modified_timestamp,
                     created_timestamp: meta.created_timestamp,
                     accessed_timestamp: meta.accessed_timestamp,
+                    no_permission: meta.no_permission,
                 },
                 false,
                 event_tx,
@@ -397,6 +417,7 @@ fn scan_directory<F>(
             modified_timestamp: 0,
             created_timestamp: 0,
             accessed_timestamp: 0,
+            no_permission: false,
         },
         true,
         event_tx,
@@ -500,6 +521,64 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_traversal_permission_denied() -> Result<(), crate::EdirstatError> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = std::env::current_dir()?
+            .join("target")
+            .join("test_traversal_perm");
+        let subdir = temp_dir.join("noperm_subdir");
+        let _ = std::fs::remove_dir_all(&temp_dir); // Clean old
+        std::fs::create_dir_all(&subdir)?;
+
+        // Set the subdirectory to no permissions
+        let mut perms = std::fs::metadata(&subdir)?.permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&subdir, perms)?;
+
+        // Initialize state
+        let shared_state = Arc::new(SharedState::new());
+        let engine = TraversalEngine::new();
+        let (tx, rx) = crossbeam::channel::unbounded();
+
+        // Launch traversal
+        let handle = engine.start_traversal(temp_dir.clone(), tx)?;
+
+        // Run coordinator
+        let mut coordinator = Coordinator::new(rx, shared_state.clone());
+        coordinator.run_coordinator_loop(&temp_dir.to_string_lossy());
+
+        // Wait for traversal thread to finish
+        let _ = handle.join();
+
+        // Restore permissions so we can clean up
+        let mut restore_perms = std::fs::metadata(&subdir)?.permissions();
+        restore_perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&subdir, restore_perms);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        // Verify that the restricted subdirectory node exists and has FLAG_NO_PERMISSION
+        let snapshot = shared_state.current_snapshot.load();
+        assert!(!snapshot.nodes.is_empty());
+
+        let mut found_noperm = false;
+        for node in snapshot.nodes.iter() {
+            let name = snapshot.string_pool.get(node.name_id).unwrap_or("");
+            if name == "noperm_subdir" {
+                assert!(node.has_no_permission());
+                found_noperm = true;
+            }
+        }
+        assert!(
+            found_noperm,
+            "Subdirectory with restricted permissions should be present in the snapshot with FLAG_NO_PERMISSION flag set"
+        );
+
         Ok(())
     }
 }

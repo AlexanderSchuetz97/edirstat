@@ -189,11 +189,19 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
                 }
                 6 => {
                     // Created date string
-                    crate::model::time_utils::format_epoch(node.created_timestamp, true)
+                    if node.has_no_permission() {
+                        "No Permission".to_string()
+                    } else {
+                        crate::model::time_utils::format_epoch(node.created_timestamp, true)
+                    }
                 }
                 7 => {
                     // Last Modified date string
-                    crate::model::time_utils::format_epoch(node.modified_timestamp, true)
+                    if node.has_no_permission() {
+                        "No Permission".to_string()
+                    } else {
+                        crate::model::time_utils::format_epoch(node.modified_timestamp, true)
+                    }
                 }
                 _ => String::new(),
             };
@@ -1038,10 +1046,12 @@ impl GuiApp {
                         // --- Created Column ---
                         row.col(|ui| {
                             paint_bg(ui, 6);
-                            ui.label(crate::model::time_utils::format_epoch(
-                                node.created_timestamp,
-                                true,
-                            ));
+                            let text = if node.has_no_permission() {
+                                "No Permission".to_string()
+                            } else {
+                                crate::model::time_utils::format_epoch(node.created_timestamp, true)
+                            };
+                            ui.label(text);
                             let cell_resp = ui.interact(
                                 ui.max_rect(),
                                 ui.id().with(("cell_interact", 6)),
@@ -1064,10 +1074,15 @@ impl GuiApp {
                         // --- Last Modified Column ---
                         row.col(|ui| {
                             paint_bg(ui, 7);
-                            ui.label(crate::model::time_utils::format_epoch(
-                                node.modified_timestamp,
-                                true,
-                            ));
+                            let text = if node.has_no_permission() {
+                                "No Permission".to_string()
+                            } else {
+                                crate::model::time_utils::format_epoch(
+                                    node.modified_timestamp,
+                                    true,
+                                )
+                            };
+                            ui.label(text);
                             let cell_resp = ui.interact(
                                 ui.max_rect(),
                                 ui.id().with(("cell_interact", 7)),

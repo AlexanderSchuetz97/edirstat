@@ -711,6 +711,7 @@ pub fn try_scan_mft(
                     modified_timestamp: entry.modified_timestamp,
                     created_timestamp: entry.created_timestamp,
                     accessed_timestamp: entry.accessed_timestamp,
+                    no_permission: false,
                 });
 
                 stack.push(TraversalFrame {
@@ -744,6 +745,7 @@ pub fn try_scan_mft(
                     modified_timestamp: entry.modified_timestamp,
                     created_timestamp: entry.created_timestamp,
                     accessed_timestamp: entry.accessed_timestamp,
+                    no_permission: false,
                 });
             }
         }

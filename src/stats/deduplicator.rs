@@ -138,10 +138,16 @@ impl DeduplicationResults {
                         .to_string()
                 };
 
-                let created_time_str =
-                    crate::model::time_utils::format_epoch(node.created_timestamp, true);
-                let modified_time_str =
-                    crate::model::time_utils::format_epoch(node.modified_timestamp, true);
+                let created_time_str = if node.has_no_permission() {
+                    "No Permission".to_string()
+                } else {
+                    crate::model::time_utils::format_epoch(node.created_timestamp, true)
+                };
+                let modified_time_str = if node.has_no_permission() {
+                    "No Permission".to_string()
+                } else {
+                    crate::model::time_utils::format_epoch(node.modified_timestamp, true)
+                };
 
                 flat_rows.push(DuplicateRow {
                     node_idx,

@@ -103,6 +103,7 @@ impl Coordinator {
                         modified_timestamp,
                         created_timestamp,
                         accessed_timestamp,
+                        no_permission,
                     } => {
                         // Resolve parent global index using the parent's creator worker ID
                         if let Some(parent_global_id) =
@@ -112,7 +113,7 @@ impl Coordinator {
                             let child_global_id = arena.len() as u32;
 
                             // Create the directory node with initial timestamps
-                            let dir_node = FileNode::new(
+                            let mut dir_node = FileNode::new(
                                 name_id,
                                 Some(parent_global_id),
                                 true,
@@ -121,6 +122,9 @@ impl Coordinator {
                                 created_timestamp,
                                 accessed_timestamp,
                             );
+                            if no_permission {
+                                dir_node.flags |= FileNode::FLAG_NO_PERMISSION;
+                            }
                             arena.push(dir_node);
                             last_child_map.push(NO_INDEX);
 
@@ -152,6 +156,7 @@ impl Coordinator {
                         modified_timestamp,
                         created_timestamp,
                         accessed_timestamp,
+                        no_permission,
                     } => {
                         if name.is_empty() && size == 0 {
                             // Directory completion signal
@@ -176,6 +181,9 @@ impl Coordinator {
                                 accessed_timestamp,
                             );
                             file_node.size = size;
+                            if no_permission {
+                                file_node.flags |= FileNode::FLAG_NO_PERMISSION;
+                            }
                             arena.push(file_node);
                             last_child_map.push(NO_INDEX);
 
@@ -206,6 +214,15 @@ impl Coordinator {
                                 entry.1 += 1;
                             });
 
+                            dirty = true;
+                        }
+                    }
+                    ScanEvent::PermissionDenied {
+                        worker_id,
+                        local_id,
+                    } => {
+                        if let Some(global_id) = resolve_id(&id_map, worker_id, local_id) {
+                            arena[global_id as usize].flags |= FileNode::FLAG_NO_PERMISSION;
                             dirty = true;
                         }
                     }

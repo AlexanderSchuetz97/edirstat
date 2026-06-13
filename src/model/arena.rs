@@ -51,6 +51,7 @@ pub struct FileNode {
 impl FileNode {
     pub const FLAG_DIRECTORY: u8 = 1 << 0;
     pub const FLAG_SYMLINK: u8 = 1 << 1;
+    pub const FLAG_NO_PERMISSION: u8 = 1 << 2;
 
     #[must_use]
     #[inline]
@@ -99,6 +100,12 @@ impl FileNode {
 
     #[must_use]
     #[inline]
+    pub const fn has_no_permission(&self) -> bool {
+        (self.flags & Self::FLAG_NO_PERMISSION) != 0
+    }
+
+    #[must_use]
+    #[inline]
     pub const fn parent_opt(&self) -> Option<u32> {
         if self.parent == NO_INDEX {
             None
@@ -139,6 +146,9 @@ impl FileNode {
             meta.created_timestamp,
             meta.accessed_timestamp,
         );
+        if meta.no_permission {
+            node.flags |= Self::FLAG_NO_PERMISSION;
+        }
         if !meta.is_dir {
             node.size = meta.len;
         }
@@ -398,6 +408,7 @@ mod tests {
             created_timestamp: 20,
             accessed_timestamp: 30,
             file_id: (1, 2),
+            no_permission: false,
         };
         let node = FileNode::from_metadata(StringId(5), Some(3), &meta);
         assert_eq!(node.name_id, StringId(5));
@@ -461,38 +472,64 @@ pub struct EntryMetadata {
     pub created_timestamp: i64,
     pub accessed_timestamp: i64,
     pub file_id: (u64, u64),
+    pub no_permission: bool,
 }
 
 impl EntryMetadata {
     pub fn from_dir_entry(entry: &std::fs::DirEntry) -> Option<Self> {
-        let metadata = entry.metadata().ok()?;
+        let metadata_res = entry.metadata();
         let name = entry.file_name().to_string_lossy().into();
-        let is_dir = metadata.is_dir();
-        let is_symlink = metadata.is_symlink();
-        let len = metadata.len();
 
-        let modified_timestamp = metadata
-            .modified()
-            .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
-        let created_timestamp = metadata
-            .created()
-            .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
-        let accessed_timestamp = metadata
-            .accessed()
-            .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
+        match metadata_res {
+            Ok(metadata) => {
+                let is_dir = metadata.is_dir();
+                let is_symlink = metadata.is_symlink();
+                let len = metadata.len();
 
-        let file_id = crate::engine::traversal::get_file_id(&metadata);
+                let modified_timestamp = metadata
+                    .modified()
+                    .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
+                let created_timestamp = metadata
+                    .created()
+                    .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
+                let accessed_timestamp = metadata
+                    .accessed()
+                    .map_or(0, crate::model::time_utils::system_time_to_unix_timestamp);
 
-        Some(Self {
-            name,
-            is_dir,
-            is_symlink,
-            len,
-            modified_timestamp,
-            created_timestamp,
-            accessed_timestamp,
-            file_id,
-        })
+                let file_id = crate::engine::traversal::get_file_id(&metadata);
+
+                Some(Self {
+                    name,
+                    is_dir,
+                    is_symlink,
+                    len,
+                    modified_timestamp,
+                    created_timestamp,
+                    accessed_timestamp,
+                    file_id,
+                    no_permission: false,
+                })
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                let file_type = entry.file_type().ok();
+                let is_dir = file_type.as_ref().is_some_and(std::fs::FileType::is_dir);
+                let is_symlink = file_type
+                    .as_ref()
+                    .is_some_and(std::fs::FileType::is_symlink);
+                Some(Self {
+                    name,
+                    is_dir,
+                    is_symlink,
+                    len: 0,
+                    modified_timestamp: 0,
+                    created_timestamp: 0,
+                    accessed_timestamp: 0,
+                    file_id: (0, 0),
+                    no_permission: true,
+                })
+            }
+            Err(_) => None,
+        }
     }
 }
 
