@@ -33,6 +33,9 @@ All notable changes to **eDirStat** will be documented in this file.
 - **🧪 Typos Check CI/CD:** Initialized automated spelling/typos check workflow in the CI/CD pipeline.
 - **📊 Item and Directory Count Sorting:** Added full support for sorting the directory explorer view by item and subdirectory counts.
 - **🚀 Headless Snapshot Mode:** Added a headless command-line mode to run directory scans and automatically save results to a `.edst` snapshot file, bypassing the GUI.
+- **🧪 Comprehensive Test Suite:** Added 55 new unit and integration tests across the codebase, significantly expanding test coverage for charts, model arena, persistence, and directory traversal.
+- **🛡️ Restricted Permissions Handling:** Added detection and safe handling of folders with restricted access/permissions, marking them as "No Permission" in the UI rather than failing the scan.
+- **🔔 Toast Notifications:** Integrated interactive toast notifications (success, warning, error, info) for file manager operations, terminal launching, and deduplication hardlinking/softlinking.
 
 ### Changed
 
@@ -51,7 +54,7 @@ All notable changes to **eDirStat** will be documented in this file.
 - **✏️ Explorer Column Renaming:** Renamed the "Last Modified" column to "Modified" for a cleaner and more compact header layout.
 - **🎨 UI Enhancements:** Improved the table operations buttons styling (removing gray backgrounds for a cleaner look) and styled warning/detail modals with stronger, higher-contrast text.
 - **💾 Persistence Format V2:** Bumped the snapshot persistence header to `v2` to support new metadata features.
-- **📦 Dependency Upgrades:** Upgraded underlying project dependencies, including updating `egui-table-kit` to version `0.2.0`.
+- **📦 Dependency Upgrades:** Upgraded underlying project dependencies, including updating `egui-table-kit` to version `0.2.1` and integrating `egui-notify`.
 - **🪟 Console-Free Windows Executable:** Configured the application so that the console command window does not spawn when launching the GUI on Windows.
 - **⚡ Internment Migration:** Switched file name storage in the arena to use `xgx_intern` for faster lookup and reduced heap allocations.
 - **📦 Release Build Optimizations:** Enabled Link-Time Optimization (LTO thin), symbol stripping, and restricted codegen-units to 1 for release binaries to minimize executable size and improve performance.
@@ -68,6 +71,7 @@ All notable changes to **eDirStat** will be documented in this file.
 - **🛡️ NTFS MFT Driver Hardening:** Significantly hardened the Windows-native NTFS MFT driver with extra safety checks and bounds validation.
 - **🧹 Walk Context Refactoring:** Refactored the recursive directory scanner context into a unified `WalkCtx` struct for cleaner and safer code.
 - **🐧 Unix Root Scanning Improvements:** Enhanced traversal of the system root on Unix/Linux by automatically filtering out virtual/system directories (such as `/proc`, `/sys`, `/dev`, etc.) and allowing local partition crossing.
+- **⚡ Lowercase Extension Helper:** Switched to a shared, stack-allocated `with_lowercase_ext` helper for file extension mappings to avoid heap allocations.
 
 ### Fixed
 
