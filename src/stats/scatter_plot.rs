@@ -124,7 +124,7 @@ impl super::StatComponent for FileAgeSizeScatterChart {
         ];
 
         let points = egui_plot::Points::new("Top 5,000 Space Hogs", plot_points)
-            .radius(2.0)
+            .radius(2.0f32)
             .color(crate::colors::COLOR_SCANNING);
 
         let plot = egui_plot::Plot::new("age_size_scatter_plot")

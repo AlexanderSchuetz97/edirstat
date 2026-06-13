@@ -182,7 +182,7 @@ impl StatComponent for TreemapChart {
 
         // Dynamic overlays for highlights
         if let Some(block) = hovered_block {
-            let stroke = eframe::egui::Stroke::new(1.5, crate::colors::COLOR_WHITE);
+            let stroke = eframe::egui::Stroke::new(1.5f32, crate::colors::COLOR_WHITE);
             painter.rect(
                 block.rect,
                 0.0,

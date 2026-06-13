@@ -57,7 +57,7 @@ impl super::GuiApp {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     response = response.on_hover_text("Click to Cancel Scan");
 
-                    let stroke = egui::Stroke::new(2.0, crate::colors::WARNING_RED);
+                    let stroke = egui::Stroke::new(2.0f32, crate::colors::WARNING_RED);
                     let inset = 4.0;
                     ui.painter().line_segment(
                         [
@@ -611,7 +611,7 @@ impl super::GuiApp {
                                                         .linear_multiply(0.15),
                                                 )
                                                 .stroke(egui::Stroke::new(
-                                                    1.0,
+                                                    1.0f32,
                                                     ui.visuals()
                                                         .selection
                                                         .stroke

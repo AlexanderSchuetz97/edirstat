@@ -303,7 +303,7 @@ fn resolve_id(id_map: &[Vec<u32>], worker_id: u8, local_id: LocalId) -> Option<u
 }
 
 #[inline]
-fn connect_child(
+const fn connect_child(
     arena: &mut [FileNode],
     last_child_map: &mut [u32],
     parent_global_id: u32,
@@ -325,7 +325,7 @@ fn connect_child(
 }
 
 #[inline]
-fn propagate_size_and_time(
+const fn propagate_size_and_time(
     arena: &mut [FileNode],
     start_parent_idx: u32,
     size: u64,

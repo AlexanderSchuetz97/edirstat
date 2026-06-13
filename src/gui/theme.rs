@@ -134,7 +134,7 @@ pub fn setup_custom_style(ctx: &egui::Context) {
 
     // Borders
     visuals.widgets.noninteractive.bg_fill = BG_WINDOW_SLATE;
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, STROKE_BORDER_SLATE);
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0f32, STROKE_BORDER_SLATE);
 
     ctx.set_visuals(visuals);
 }

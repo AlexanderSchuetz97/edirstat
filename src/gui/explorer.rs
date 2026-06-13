@@ -605,7 +605,7 @@ impl GuiApp {
 
         // Draw vertical indentation guidelines to visually track nested guidelines
         let painter = ui.painter();
-        let stroke = egui::Stroke::new(1.0, theme::INDENT_GUIDELINE);
+        let stroke = egui::Stroke::new(1.0f32, theme::INDENT_GUIDELINE);
         for i in 0..indent_level {
             #[allow(clippy::cast_precision_loss)]
             let x = (i as f32).mul_add(16.0, rect.min.x) + 8.0;
@@ -1200,7 +1200,7 @@ impl GuiApp {
                         .scope(|ui| {
                             ui.style_mut().visuals.button_frame = false;
                             ui.style_mut().visuals.widgets.hovered.fg_stroke =
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68));
+                                egui::Stroke::new(1.0f32, egui::Color32::from_rgb(239, 68, 68));
                             ui.button("❌")
                         })
                         .inner
@@ -1314,7 +1314,7 @@ impl GuiApp {
                         .scope(|ui| {
                             ui.style_mut().visuals.button_frame = false;
                             ui.style_mut().visuals.widgets.hovered.fg_stroke =
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(239, 68, 68));
+                                egui::Stroke::new(1.0f32, egui::Color32::from_rgb(239, 68, 68));
                             ui.button("❌")
                         })
                         .inner
@@ -1727,21 +1727,21 @@ fn draw_action_button(
             // Inactive (transparent/very subtle background border)
             ui.style_mut().visuals.widgets.inactive.weak_bg_fill = color.linear_multiply(0.04);
             ui.style_mut().visuals.widgets.inactive.bg_stroke =
-                egui::Stroke::new(1.0, color.linear_multiply(0.2));
+                egui::Stroke::new(1.0f32, color.linear_multiply(0.2));
             ui.style_mut().visuals.widgets.inactive.fg_stroke =
-                egui::Stroke::new(1.0, ui.visuals().widgets.inactive.text_color());
+                egui::Stroke::new(1.0f32, ui.visuals().widgets.inactive.text_color());
 
             // Hovered (soft fill, solid border)
             ui.style_mut().visuals.widgets.hovered.weak_bg_fill = color.linear_multiply(0.12);
             ui.style_mut().visuals.widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0, color.linear_multiply(0.45));
-            ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, color);
+                egui::Stroke::new(1.0f32, color.linear_multiply(0.45));
+            ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0f32, color);
 
             // Active (pressed)
             ui.style_mut().visuals.widgets.active.weak_bg_fill = color.linear_multiply(0.22);
             ui.style_mut().visuals.widgets.active.bg_stroke =
-                egui::Stroke::new(1.0, color.linear_multiply(0.65));
-            ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, color);
+                egui::Stroke::new(1.0f32, color.linear_multiply(0.65));
+            ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0f32, color);
 
             ui.button(label)
         })

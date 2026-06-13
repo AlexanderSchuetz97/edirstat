@@ -869,7 +869,7 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2, egui::Color32::from_rgb(74, 85, 104))) // Bright, crisp slate border
+                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104))) // Bright, crisp slate border
                         .inner_margin(egui::Margin::ZERO) // Fill header completely to the borders
                         .corner_radius(8.0),
                 )
@@ -895,7 +895,7 @@ impl GuiApp {
 
                     // Thin, subtle separator line matching normal panels
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE));
+                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
 
                     // Modal Content Frame
                     egui::Frame::new()
@@ -938,7 +938,7 @@ impl GuiApp {
                                     let path_bg = theme::BG_PANEL_SLATE;
                                     egui::Frame::new()
                                         .fill(path_bg)
-                                        .stroke(egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE))
+                                        .stroke(egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE))
                                         .inner_margin(egui::Margin::same(12))
                                         .corner_radius(4.0)
                                         .show(ui, |ui| {
@@ -1083,7 +1083,7 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2, egui::Color32::from_rgb(74, 85, 104)))
+                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104)))
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1109,7 +1109,7 @@ impl GuiApp {
 
                     // Separator line
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE));
+                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
 
                     // Content Area
                     egui::Frame::new()
@@ -1123,7 +1123,7 @@ impl GuiApp {
                                 // Warning highlight box
                                 egui::Frame::new()
                                     .fill(theme::BG_PANEL_SLATE)
-                                    .stroke(egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE))
+                                    .stroke(egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE))
                                     .inner_margin(egui::Margin::same(12))
                                     .corner_radius(4.0)
                                     .show(ui, |ui| {
@@ -1181,7 +1181,7 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2, egui::Color32::from_rgb(74, 85, 104))) // Matching bright slate border
+                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104))) // Matching bright slate border
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1207,7 +1207,7 @@ impl GuiApp {
 
                     // Thin, subtle separator line
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE));
+                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
 
                     // Content Area
                     egui::Frame::new()
@@ -1236,7 +1236,7 @@ impl GuiApp {
                                 let info_bg = theme::BG_PANEL_SLATE;
                                 egui::Frame::new()
                                     .fill(info_bg)
-                                    .stroke(egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE))
+                                    .stroke(egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE))
                                     .inner_margin(egui::Margin::same(12))
                                     .corner_radius(4.0)
                                     .show(ui, |ui| {
@@ -1272,7 +1272,7 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2, egui::Color32::from_rgb(74, 85, 104)))
+                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104)))
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1298,7 +1298,7 @@ impl GuiApp {
 
                     // Thin, subtle separator line
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE));
+                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
 
                     // Content Area
                     egui::Frame::new()
@@ -1340,7 +1340,7 @@ impl GuiApp {
                                             for (title, desc) in steps {
                                                 egui::Frame::new()
                                                     .fill(theme::BG_PANEL_SLATE)
-                                                    .stroke(egui::Stroke::new(1.0, theme::STROKE_BORDER_SLATE))
+                                                    .stroke(egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE))
                                                     .inner_margin(egui::Margin::same(10))
                                                     .corner_radius(4.0)
                                                     .show(ui, |ui| {

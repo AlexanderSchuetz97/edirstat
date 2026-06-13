@@ -132,11 +132,11 @@ impl super::StatComponent for TemporalTimelineChart {
 
         let space_line = egui_plot::Line::new("Space Progress", space_points)
             .color(crate::colors::COLOR_SCANNING)
-            .width(2.0);
+            .width(2.0f32);
 
         let activity_line = egui_plot::Line::new("Activity Frequency", activity_points)
             .color(crate::colors::GLOW_INNER_CORE)
-            .width(1.5);
+            .width(1.5f32);
 
         // Render dual layout
         let half_height = (ui.available_height() - 40.0) / 2.0;

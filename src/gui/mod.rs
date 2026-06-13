@@ -545,7 +545,7 @@ impl GuiApp {
 
                         let frame = egui::Frame::new()
                             .fill(glow_color)
-                            .stroke(egui::Stroke::new(1.0, warning_red.linear_multiply(alpha * 0.4)))
+                            .stroke(egui::Stroke::new(1.0f32, warning_red.linear_multiply(alpha * 0.4)))
                             .inner_margin(egui::Margin::symmetric(8, 4))
                             .corner_radius(4.0);
 
@@ -806,18 +806,18 @@ impl eframe::App for GuiApp {
 
                         // Inactive state (pulsing)
                         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = fill_color;
-                        ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, border_color);
-                        ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, text_color);
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0f32, border_color);
+                        ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0f32, text_color);
 
                         // Hovered state (bright purple highlight)
                         ui.style_mut().visuals.widgets.hovered.weak_bg_fill = theme::COLOR_SCANNING.linear_multiply(0.25);
-                        ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, theme::COLOR_SCANNING);
-                        ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, theme::COLOR_WHITE);
+                        ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
+                        ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
 
                         // Active state (clicked)
                         ui.style_mut().visuals.widgets.active.weak_bg_fill = theme::COLOR_SCANNING.linear_multiply(0.35);
-                        ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, theme::COLOR_SCANNING);
-                        ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, theme::COLOR_WHITE);
+                        ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
+                        ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
 
                         ui.button(egui::RichText::new("📁 Scan Directory").strong())
                     }).inner
@@ -1539,25 +1539,25 @@ fn render_custom_op_button(
                 ui.style_mut().visuals.widgets.inactive.weak_bg_fill =
                     hover_color.linear_multiply(0.04);
                 ui.style_mut().visuals.widgets.inactive.bg_stroke =
-                    egui::Stroke::new(1.0, hover_color.linear_multiply(0.12));
+                    egui::Stroke::new(1.0f32, hover_color.linear_multiply(0.12));
                 ui.style_mut().visuals.widgets.inactive.fg_stroke =
-                    egui::Stroke::new(1.0, ui.visuals().widgets.inactive.text_color());
+                    egui::Stroke::new(1.0f32, ui.visuals().widgets.inactive.text_color());
 
                 // Hovered (soft fill, subtle stroke, full hover color for icon)
                 ui.style_mut().visuals.widgets.hovered.weak_bg_fill =
                     hover_color.linear_multiply(0.12);
                 ui.style_mut().visuals.widgets.hovered.bg_stroke =
-                    egui::Stroke::new(1.0, hover_color.linear_multiply(0.4));
+                    egui::Stroke::new(1.0f32, hover_color.linear_multiply(0.4));
                 ui.style_mut().visuals.widgets.hovered.fg_stroke =
-                    egui::Stroke::new(1.0, hover_color);
+                    egui::Stroke::new(1.0f32, hover_color);
 
                 // Active (pressed)
                 ui.style_mut().visuals.widgets.active.weak_bg_fill =
                     hover_color.linear_multiply(0.24);
                 ui.style_mut().visuals.widgets.active.bg_stroke =
-                    egui::Stroke::new(1.0, hover_color.linear_multiply(0.6));
+                    egui::Stroke::new(1.0f32, hover_color.linear_multiply(0.6));
                 ui.style_mut().visuals.widgets.active.fg_stroke =
-                    egui::Stroke::new(1.0, hover_color);
+                    egui::Stroke::new(1.0f32, hover_color);
 
                 // Set button padding to make it a nice square
                 ui.spacing_mut().button_padding = egui::vec2(6.0, 4.0);
