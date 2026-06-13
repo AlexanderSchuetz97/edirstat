@@ -26,7 +26,10 @@
 #![allow(clippy::crate_in_macro_def)]
 #![allow(clippy::too_many_lines)]
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use clap::Parser;
 use edirstat::{coordinator::SharedState, gui::GuiApp, traversal::TraversalEngine};
@@ -43,6 +46,10 @@ struct Args {
     /// Run in headless benchmark mode to measure scan time on the target directory and exit
     #[arg(long)]
     benchmark: bool,
+
+    /// Destination path or directory to save the scanned snapshot file (bypasses GUI and exits)
+    #[arg(long)]
+    to: Option<PathBuf>,
 }
 
 fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
@@ -88,6 +95,55 @@ fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+fn run_headless_scan_and_save(
+    scan_path: &Path,
+    to_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !scan_path.exists() {
+        return Err(format!("Error: Scan path does not exist: {}", scan_path.display()).into());
+    }
+    let scan_path = std::fs::canonicalize(scan_path)?;
+    if !scan_path.is_dir() {
+        return Err(format!(
+            "Error: Scan path is not a directory: {}",
+            scan_path.display()
+        )
+        .into());
+    }
+
+    println!("Headless scanning started for: {}", scan_path.display());
+
+    let shared_state = Arc::new(SharedState::new());
+    let traversal_engine = Arc::new(TraversalEngine::new());
+    let (tx, rx) = crossbeam::channel::unbounded();
+
+    let handle = traversal_engine.start_traversal(scan_path.clone(), tx)?;
+
+    let mut coordinator = edirstat::coordinator::Coordinator::new(rx, shared_state.clone());
+    coordinator.run_coordinator_loop(&scan_path.to_string_lossy());
+
+    let _ = handle.join();
+
+    let snapshot = shared_state.current_snapshot.load();
+    if snapshot.nodes.is_empty() {
+        return Err("Error: The completed scan resulted in an empty snapshot.".into());
+    }
+
+    let mut dest_path = to_path;
+    if dest_path.is_dir() {
+        let folder_name = scan_path
+            .file_name()
+            .map_or_else(|| "root".to_string(), |s| s.to_string_lossy().into_owned());
+        dest_path.push(format!("{folder_name}.edst"));
+    }
+
+    println!("Saving snapshot to: {}", dest_path.display());
+    edirstat::persistence::save_snapshot(&snapshot.nodes, &snapshot.string_pool, &dest_path)?;
+    println!("Snapshot saved successfully.");
+
+    Ok(())
+}
+
 fn main() -> eframe::Result {
     #[cfg(feature = "profile-tracy")]
     let _client = tracy_client::Client::start();
@@ -96,6 +152,19 @@ fn main() -> eframe::Result {
 
     if args.benchmark {
         if let Err(e) = run_benchmark(args.path) {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    if let Some(to_path) = args.to {
+        let scan_path = args.path.unwrap_or_else(|| {
+            eprintln!("Error: A path to scan must be provided when utilizing the --to option.");
+            std::process::exit(1);
+        });
+
+        if let Err(e) = run_headless_scan_and_save(&scan_path, to_path) {
             eprintln!("{e}");
             std::process::exit(1);
         }
