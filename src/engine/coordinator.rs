@@ -12,8 +12,7 @@ use crossbeam::channel::Receiver;
 
 use super::traversal::{LocalId, ScanEvent};
 use crate::arena::{
-    FileArenaSnapshot, FileNode, NO_EXTENSION, NO_INDEX, NodeStorage, StringPool,
-    precompute_dir_counts,
+    FileArenaSnapshot, FileNode, NO_INDEX, NodeStorage, StringPool, precompute_dir_counts,
 };
 
 #[derive(Debug)]
@@ -199,16 +198,13 @@ impl Coordinator {
                             );
 
                             // O(1) Background Live Extension Tracking
-                            let ext = std::path::Path::new(&name).extension().map_or_else(
-                                || CompactString::new(NO_EXTENSION),
-                                |s| {
-                                    CompactString::from(s.to_string_lossy().as_ref())
-                                        .to_ascii_lowercase()
-                                },
-                            );
-                            let entry = ext_map.entry(ext).or_insert((0, 0));
-                            entry.0 += size;
-                            entry.1 += 1;
+                            let ext_slice = crate::arena::get_ext_slice(&name);
+                            crate::arena::with_lowercase_ext(ext_slice, |ext_lowercased| {
+                                let ext = CompactString::new(ext_lowercased);
+                                let entry = ext_map.entry(ext).or_insert((0, 0));
+                                entry.0 += size;
+                                entry.1 += 1;
+                            });
 
                             dirty = true;
                         }

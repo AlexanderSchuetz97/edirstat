@@ -12,7 +12,7 @@ use rfd::FileDialog;
 use crate::arena::precompute_dir_counts;
 
 use super::{
-    arena::{FileArenaSnapshot, NO_EXTENSION},
+    arena::FileArenaSnapshot,
     coordinator::SharedState,
     persistence::{load_snapshot, save_snapshot},
     stats::{self, StatComponent as _},
@@ -397,13 +397,13 @@ impl GuiApp {
                 continue;
             }
             if let Some(name) = snapshot.string_pool.get(node.name_id) {
-                let ext = Path::new(name).extension().map_or_else(
-                    || CompactString::new(NO_EXTENSION),
-                    |s| CompactString::from(s.to_string_lossy().as_ref()).to_ascii_lowercase(),
-                );
-                let entry = ext_map.entry(ext).or_insert((0, 0));
-                entry.0 += node.size;
-                entry.1 += 1;
+                let ext_slice = super::arena::get_ext_slice(name);
+                super::arena::with_lowercase_ext(ext_slice, |ext_lowercased| {
+                    let ext = CompactString::new(ext_lowercased);
+                    let entry = ext_map.entry(ext).or_insert((0, 0));
+                    entry.0 += node.size;
+                    entry.1 += 1;
+                });
             }
         }
         let mut stats: Vec<(CompactString, u64, u32)> = ext_map
