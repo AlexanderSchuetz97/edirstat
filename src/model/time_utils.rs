@@ -1,7 +1,7 @@
 /// Translates Unix Epoch seconds directly to a date/time Gregorian calendar string.
 #[must_use]
 pub fn format_epoch(epoch_secs: i64, include_time: bool) -> String {
-    if epoch_secs <= 0 {
+    if epoch_secs <= 0 || epoch_secs > 253_402_300_799 {
         return if include_time {
             "Unknown".to_string()
         } else {
