@@ -64,8 +64,8 @@ struct TlCacheEntry {
 }
 
 thread_local! {
-    static TL_INTERN_CACHE: std::cell::RefCell<[Option<TlCacheEntry>; 512]> = const { std::cell::RefCell::new(
-        const { [const { None }; 512] }
+    static TL_INTERN_CACHE: std::cell::RefCell<[Option<TlCacheEntry>; 2048]> = const { std::cell::RefCell::new(
+        const { [const { None }; 2048] }
     ) };
 }
 
@@ -85,11 +85,8 @@ impl ShardedStringPool {
 
     #[inline]
     fn get_or_insert(&self, s_bytes: &[u8]) -> crate::arena::StringId {
-        let mut hash = 5381u64;
-        for &b in s_bytes {
-            hash = (hash << 5).wrapping_add(hash).wrapping_add(b as u64);
-        }
-        let cache_idx = (hash % 512) as usize;
+        let hash = crc32_hash(s_bytes);
+        let cache_idx = (hash % 2048) as usize;
 
         // 1. Thread-Local L1 Cache Check (Zero locks, zero atomic instructions)
         let hit = TL_INTERN_CACHE.with(|cache| {
@@ -165,6 +162,13 @@ const fn nt_time_to_unix(nt_time: u64) -> i64 {
     } else {
         (nt_time / 10_000_000).saturating_sub(11_644_473_600) as i64
     }
+}
+
+/// Portably computes a fast CRC32 hash utilizing hardware acceleration
+/// across x86, ARM, and software fallbacks.
+#[inline]
+fn crc32_hash(bytes: &[u8]) -> u64 {
+    crc_fast::crc32_iso_hdlc(bytes) as u64
 }
 
 /// Highly-efficient UTF-16 to ASCII decoder with inline validation bypass on vector matches
@@ -663,7 +667,7 @@ fn scan_mft_file_sequential(
 
                 let mut local_links = Vec::new();
 
-                for i in 0..safe_records_count {
+                for (i, entry_slot) in target_slice.iter_mut().enumerate() {
                     let offset = i * MFT_RECORD_SIZE;
                     if offset + MFT_RECORD_SIZE <= chunk.bytes_read {
                         let record_buffer = &chunk.buffer[offset..offset + MFT_RECORD_SIZE];
@@ -744,7 +748,7 @@ fn scan_mft_file_sequential(
                                                 entry_flags |= 4;
                                             }
 
-                                            target_slice[i] = Some(MftEntry {
+                                            *entry_slot = Some(MftEntry {
                                                 size,
                                                 parent_record_id: first.parent_ref,
                                                 modified_timestamp: modified,
@@ -1069,30 +1073,28 @@ pub fn try_scan_mft(
 
             if let Some(lcn) = run.lcn {
                 let start_byte = lcn as u64 * cluster_size;
-                if raw_disk_clone.seek(SeekFrom::Start(start_byte)).is_err() {
-                    break;
-                }
+                if raw_disk_clone.seek(SeekFrom::Start(start_byte)).is_ok() {
+                    while bytes_left > 0 && current_record_id < max_records {
+                        let to_read = (bytes_left as usize).min(CHUNK_SIZE);
+                        let active_slice = &mut run_buffer[..to_read];
 
-                while bytes_left > 0 && current_record_id < max_records {
-                    let to_read = (bytes_left as usize).min(CHUNK_SIZE);
-                    let active_slice = &mut run_buffer[..to_read];
+                        if raw_disk_clone.read_exact(active_slice).is_err() {
+                            break;
+                        }
 
-                    if raw_disk_clone.read_exact(active_slice).is_err() {
-                        break;
+                        let chunk = IngestionChunk {
+                            buffer: active_slice.to_vec(),
+                            start_record_id: current_record_id,
+                            bytes_read: to_read,
+                        };
+                        current_record_id += (to_read / MFT_RECORD_SIZE) as u64;
+
+                        if filled_tx.send(chunk).is_err() {
+                            break;
+                        }
+
+                        bytes_left -= to_read as u64;
                     }
-
-                    let chunk = IngestionChunk {
-                        buffer: active_slice.to_vec(),
-                        start_record_id: current_record_id,
-                        bytes_read: to_read,
-                    };
-                    current_record_id += (to_read / MFT_RECORD_SIZE) as u64;
-
-                    if filled_tx.send(chunk).is_err() {
-                        break;
-                    }
-
-                    bytes_left -= to_read as u64;
                 }
             } else {
                 let sparse_records = (run.length_clusters * cluster_size) / MFT_RECORD_SIZE as u64;
@@ -1125,7 +1127,7 @@ pub fn try_scan_mft(
                     )
                 };
 
-                for i in 0..safe_records_count {
+                for (i, entry_slot) in target_slice.iter_mut().enumerate() {
                     let offset = i * MFT_RECORD_SIZE;
                     if offset + MFT_RECORD_SIZE <= chunk.bytes_read {
                         let record_buffer = &chunk.buffer[offset..offset + MFT_RECORD_SIZE];
@@ -1205,7 +1207,7 @@ pub fn try_scan_mft(
                                                 entry_flags |= 4;
                                             }
 
-                                            target_slice[i] = Some(MftEntry {
+                                            *entry_slot = Some(MftEntry {
                                                 size,
                                                 parent_record_id: first.parent_ref,
                                                 modified_timestamp: modified,
