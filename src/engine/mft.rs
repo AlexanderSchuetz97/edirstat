@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -9,8 +9,10 @@ use std::{
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt as _;
 
+use ahash::HashSetExt as _;
 use compact_str::CompactString;
 use crossbeam::channel::{Sender, bounded};
+use smallvec::SmallVec;
 
 #[cfg(target_os = "windows")]
 use windows::{Win32::Storage::FileSystem::GetVolumeInformationW, core::PCWSTR};
@@ -410,13 +412,12 @@ struct AttributeHeader<'a> {
 }
 
 /// Returns a collection of raw attributes contained inside the MFT record.
-fn parse_attributes(record_data: &[u8]) -> Vec<AttributeHeader<'_>> {
-    let mut attrs = Vec::new();
+fn parse_attributes(record_data: &[u8]) -> SmallVec<[AttributeHeader<'_>; 6]> {
+    let mut attrs = SmallVec::new();
     if record_data.len() < 24 {
         return attrs;
     }
-    let first_attr_offset =
-        u16::from_le_bytes(record_data[20..22].try_into().unwrap_or([0; 2])) as usize;
+    let first_attr_offset = u16::from_le_bytes([record_data[20], record_data[21]]) as usize;
 
     if first_attr_offset >= record_data.len() {
         return attrs;
@@ -424,15 +425,21 @@ fn parse_attributes(record_data: &[u8]) -> Vec<AttributeHeader<'_>> {
     let mut offset = first_attr_offset;
 
     while offset + 8 <= record_data.len() {
-        let ty = u32::from_le_bytes(record_data[offset..offset + 4].try_into().unwrap_or([0; 4]));
+        let ty = u32::from_le_bytes([
+            record_data[offset],
+            record_data[offset + 1],
+            record_data[offset + 2],
+            record_data[offset + 3],
+        ]);
         if ty == 0xFFFF_FFFF {
             break;
         }
-        let length = u32::from_le_bytes(
-            record_data[offset + 4..offset + 8]
-                .try_into()
-                .unwrap_or([0; 4]),
-        ) as usize;
+        let length = u32::from_le_bytes([
+            record_data[offset + 4],
+            record_data[offset + 5],
+            record_data[offset + 6],
+            record_data[offset + 7],
+        ]) as usize;
 
         // Hardening: Verify attributes are at least 16 bytes and do not extend past file bounds
         if length < 16 || offset + length > record_data.len() {
@@ -444,20 +451,26 @@ fn parse_attributes(record_data: &[u8]) -> Vec<AttributeHeader<'_>> {
 
         let value_length = if is_non_resident {
             if length >= 56 {
-                u64::from_le_bytes(
-                    record_data[offset + 48..offset + 56]
-                        .try_into()
-                        .unwrap_or([0; 8]),
-                )
+                u64::from_le_bytes([
+                    record_data[offset + 48],
+                    record_data[offset + 49],
+                    record_data[offset + 50],
+                    record_data[offset + 51],
+                    record_data[offset + 52],
+                    record_data[offset + 53],
+                    record_data[offset + 54],
+                    record_data[offset + 55],
+                ])
             } else {
                 0
             }
         } else if length >= 20 {
-            u32::from_le_bytes(
-                record_data[offset + 16..offset + 20]
-                    .try_into()
-                    .unwrap_or([0; 4]),
-            ) as u64
+            u32::from_le_bytes([
+                record_data[offset + 16],
+                record_data[offset + 17],
+                record_data[offset + 18],
+                record_data[offset + 19],
+            ]) as u64
         } else {
             0
         };
@@ -475,33 +488,78 @@ fn parse_attributes(record_data: &[u8]) -> Vec<AttributeHeader<'_>> {
     attrs
 }
 
+/// Extracts standard info timestamps (created, modified, accessed) from an attribute payload.
+#[inline]
+fn parse_standard_information_timestamps(payload: &[u8]) -> Option<(i64, i64, i64)> {
+    if payload.len() < 24 {
+        return None;
+    }
+    let val_offset = u16::from_le_bytes([payload[20], payload[21]]) as usize;
+    if val_offset + 32 <= payload.len() {
+        let std_info = &payload[val_offset..val_offset + 32];
+        let created = nt_time_to_unix(u64::from_le_bytes([
+            std_info[0],
+            std_info[1],
+            std_info[2],
+            std_info[3],
+            std_info[4],
+            std_info[5],
+            std_info[6],
+            std_info[7],
+        ]));
+        let modified = nt_time_to_unix(u64::from_le_bytes([
+            std_info[8],
+            std_info[9],
+            std_info[10],
+            std_info[11],
+            std_info[12],
+            std_info[13],
+            std_info[14],
+            std_info[15],
+        ]));
+        let accessed = nt_time_to_unix(u64::from_le_bytes([
+            std_info[24],
+            std_info[25],
+            std_info[26],
+            std_info[27],
+            std_info[28],
+            std_info[29],
+            std_info[30],
+            std_info[31],
+        ]));
+        Some((created, modified, accessed))
+    } else {
+        None
+    }
+}
+
 /// Extracts all unique directory links from a file record, deduplicating local namespace variants.
-fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
-    let mut links: ahash::HashMap<u64, (CompactString, i32)> = ahash::HashMap::default();
+fn extract_all_links_from_record(attrs: &[AttributeHeader<'_>]) -> SmallVec<[ExtractedLink; 1]> {
+    let mut links = SmallVec::<[(u64, CompactString, i32); 2]>::new();
     let mut unnamed_data_size = None;
     let mut has_attr_list = false;
     let mut fallback_size = 0u64;
 
-    let attrs = parse_attributes(record_buffer);
-
-    for attr in &attrs {
+    for attr in attrs {
         match attr.ty {
             0x30 if !attr.is_non_resident && attr.payload.len() >= 24 => {
                 // Resident FileName Attribute
-                let val_offset =
-                    u16::from_le_bytes(attr.payload[20..22].try_into().unwrap_or([0; 2])) as usize;
-                let val_len =
-                    u32::from_le_bytes(attr.payload[16..20].try_into().unwrap_or([0; 4])) as usize;
+                let val_offset = u16::from_le_bytes([attr.payload[20], attr.payload[21]]) as usize;
+                let val_len = u32::from_le_bytes([
+                    attr.payload[16],
+                    attr.payload[17],
+                    attr.payload[18],
+                    attr.payload[19],
+                ]) as usize;
+
                 if val_offset + val_len <= attr.payload.len() && val_len >= 66 {
                     let val = &attr.payload[val_offset..val_offset + val_len];
 
-                    let parent_ref_bytes: [u8; 8] = val
-                        .get(0..8)
-                        .and_then(|slice| slice.try_into().ok())
-                        .unwrap_or([0; 8]);
-                    let parent_ref = u64::from_le_bytes(parent_ref_bytes) & 0x0000_ffff_ffff_ffff;
+                    let parent_ref = u64::from_le_bytes([
+                        val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7],
+                    ]) & 0x0000_ffff_ffff_ffff;
 
-                    let namespace = *val.get(65).unwrap_or(&0);
+                    let namespace = val[65];
                     let prio = match namespace {
                         1 => 3, // Win32
                         3 => 2, // Win32AndDos
@@ -509,27 +567,32 @@ fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
                         _ => 0, // Posix
                     };
 
-                    let name_len = *val.get(64).unwrap_or(&0) as usize;
-                    if 66 + name_len * 2 <= val.len()
-                        && let Some(name_raw) = val.get(66..66 + name_len * 2)
-                    {
-                        // Use optimized decoder
-                        let compact_name = decode_utf16_name_to_compact_string(name_raw);
+                    let name_len = val[64] as usize;
+                    if 66 + name_len * 2 <= val.len() {
+                        let mut existing_idx = None;
+                        for (idx, item) in links.iter().enumerate() {
+                            if item.0 == parent_ref {
+                                existing_idx = Some(idx);
+                                break;
+                            }
+                        }
 
-                        let entry = links
-                            .entry(parent_ref)
-                            .or_insert_with(|| (CompactString::new(""), -1));
-                        if prio > entry.1 {
-                            *entry = (compact_name, prio);
+                        let should_decode = existing_idx.is_none_or(|idx| prio > links[idx].2);
+
+                        if should_decode && let Some(name_raw) = val.get(66..66 + name_len * 2) {
+                            let compact_name = decode_utf16_name_to_compact_string(name_raw);
+                            if let Some(idx) = existing_idx {
+                                links[idx] = (parent_ref, compact_name, prio);
+                            } else {
+                                links.push((parent_ref, compact_name, prio));
+                            }
                         }
                     }
 
                     if fallback_size == 0 {
-                        let fallback_bytes: [u8; 8] = val
-                            .get(48..56)
-                            .and_then(|slice| slice.try_into().ok())
-                            .unwrap_or([0; 8]);
-                        fallback_size = u64::from_le_bytes(fallback_bytes);
+                        fallback_size = u64::from_le_bytes([
+                            val[48], val[49], val[50], val[51], val[52], val[53], val[54], val[55],
+                        ]);
                     }
                 }
             }
@@ -552,15 +615,16 @@ fn extract_all_links_from_record(record_buffer: &[u8]) -> Vec<ExtractedLink> {
         _ => fallback_size,
     };
 
-    links
-        .into_iter()
-        .map(|(parent_ref, (name, _))| ExtractedLink {
+    let mut out = SmallVec::new();
+    for (parent_ref, name, _) in links {
+        out.push(ExtractedLink {
             parent_ref,
             name,
             size: actual_size,
             has_attr_list,
-        })
-        .collect()
+        });
+    }
+    out
 }
 
 /// Reconstructs the absolute path of an MFT record purely in-memory by walking up parent references.
@@ -573,14 +637,18 @@ fn reconstruct_path(
 ) -> PathBuf {
     let mut path = PathBuf::new();
     let mut curr = record_id;
-    let mut segments = Vec::new();
-    let mut visited = HashSet::new();
+
+    // Use stack-allocated SmallVec arrays instead of heap-allocated Vec and HashSet
+    let mut segments = SmallVec::<[String; 16]>::new();
+    let mut visited = SmallVec::<[u64; 16]>::new();
 
     while curr != root_record_id {
         // Prevent infinite loops on corrupted/circular directory reference networks on disk
-        if !visited.insert(curr) {
+        if visited.contains(&curr) {
             break;
         }
+        visited.push(curr);
+
         if let Some(Some(entry)) = mft_entries.get(curr as usize) {
             if let Some(name_str) = sharded_pool.get_str(entry.name_id) {
                 segments.push(name_str);
@@ -745,44 +813,24 @@ fn scan_mft_file_sequential(
                                 let base_record_id = base_file_ref & 0x0000_ffff_ffff_ffff;
 
                                 if base_record_id == 0 {
-                                    let extracted_links =
-                                        extract_all_links_from_record(record_buffer);
+                                    let attrs = parse_attributes(record_buffer);
+                                    let extracted_links = extract_all_links_from_record(&attrs);
                                     let is_dir = (flags & 2) != 0;
 
                                     let mut modified = 0i64;
                                     let mut created = 0i64;
                                     let mut accessed = 0i64;
 
-                                    let attrs = parse_attributes(record_buffer);
                                     for attr in &attrs {
                                         if attr.ty == 0x10
                                             && !attr.is_non_resident
-                                            && attr.payload.len() >= 24
+                                            && let Some((cre, mod_t, acc)) =
+                                                parse_standard_information_timestamps(attr.payload)
                                         {
-                                            let val_offset = u16::from_le_bytes(
-                                                attr.payload[20..22].try_into().unwrap_or([0; 2]),
-                                            )
-                                                as usize;
-                                            if val_offset + 32 <= attr.payload.len() {
-                                                if let Some(std_info) =
-                                                    attr.payload.get(val_offset..val_offset + 32)
-                                                {
-                                                    created = nt_time_to_unix(u64::from_le_bytes(
-                                                        std_info[0..8].try_into().unwrap_or([0; 8]),
-                                                    ));
-                                                    modified = nt_time_to_unix(u64::from_le_bytes(
-                                                        std_info[8..16]
-                                                            .try_into()
-                                                            .unwrap_or([0; 8]),
-                                                    ));
-                                                    accessed = nt_time_to_unix(u64::from_le_bytes(
-                                                        std_info[24..32]
-                                                            .try_into()
-                                                            .unwrap_or([0; 8]),
-                                                    ));
-                                                }
-                                                break;
-                                            }
+                                            created = cre;
+                                            modified = mod_t;
+                                            accessed = acc;
+                                            break;
                                         }
                                     }
 
@@ -881,7 +929,7 @@ fn scan_mft_file_sequential(
 
     let mut buffered_events = Vec::with_capacity(1024 * 1024);
     let mut local_id_counter = 1u32;
-    let mut visited = HashSet::with_capacity(max_records as usize / 5);
+    let mut visited = ahash::HashSet::with_capacity(max_records as usize / 5);
     visited.insert(target_record);
 
     let mut stack = vec![TraversalFrame {
@@ -1259,44 +1307,24 @@ pub fn try_scan_mft(
                                 let base_record_id = base_file_ref & 0x0000_ffff_ffff_ffff;
 
                                 if base_record_id == 0 {
-                                    let extracted_links =
-                                        extract_all_links_from_record(record_buffer);
+                                    let attrs = parse_attributes(record_buffer);
+                                    let extracted_links = extract_all_links_from_record(&attrs);
                                     let is_dir = (flags & 2) != 0;
 
                                     let mut modified = 0i64;
                                     let mut created = 0i64;
                                     let mut accessed = 0i64;
 
-                                    let attrs = parse_attributes(record_buffer);
                                     for attr in &attrs {
                                         if attr.ty == 0x10
                                             && !attr.is_non_resident
-                                            && attr.payload.len() >= 24
+                                            && let Some((cre, mod_t, acc)) =
+                                                parse_standard_information_timestamps(attr.payload)
                                         {
-                                            let val_offset = u16::from_le_bytes(
-                                                attr.payload[20..22].try_into().unwrap_or([0; 2]),
-                                            )
-                                                as usize;
-                                            if val_offset + 32 <= attr.payload.len() {
-                                                if let Some(std_info) =
-                                                    attr.payload.get(val_offset..val_offset + 32)
-                                                {
-                                                    created = nt_time_to_unix(u64::from_le_bytes(
-                                                        std_info[0..8].try_into().unwrap_or([0; 8]),
-                                                    ));
-                                                    modified = nt_time_to_unix(u64::from_le_bytes(
-                                                        std_info[8..16]
-                                                            .try_into()
-                                                            .unwrap_or([0; 8]),
-                                                    ));
-                                                    accessed = nt_time_to_unix(u64::from_le_bytes(
-                                                        std_info[24..32]
-                                                            .try_into()
-                                                            .unwrap_or([0; 8]),
-                                                    ));
-                                                }
-                                                break;
-                                            }
+                                            created = cre;
+                                            modified = mod_t;
+                                            accessed = acc;
+                                            break;
                                         }
                                     }
 
@@ -1402,7 +1430,7 @@ pub fn try_scan_mft(
 
     // Hierarchical streaming phase
     let mut local_id_counter = 1u32;
-    let mut visited = HashSet::with_capacity(max_records as usize / 5);
+    let mut visited = ahash::HashSet::with_capacity(max_records as usize / 5);
     visited.insert(target_record);
 
     let mut stack = vec![TraversalFrame {
