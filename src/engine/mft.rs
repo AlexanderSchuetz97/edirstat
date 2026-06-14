@@ -171,40 +171,74 @@ fn crc32_hash(bytes: &[u8]) -> u64 {
     crc_fast::crc32_iso_hdlc(bytes) as u64
 }
 
-/// Highly-efficient UTF-16 to ASCII decoder with inline validation bypass on vector matches
-#[inline(always)]
+/// Dual-lane memory-safe UTF-16 to ASCII decoder utilizing SSE and AVX2 register channels
+#[inline]
 #[allow(clippy::cast_ptr_alignment)]
-fn decode_utf16_avx2(name_raw: &[u8]) -> Option<CompactString> {
+fn decode_utf16_simd(name_raw: &[u8]) -> Option<CompactString> {
     #[cfg(target_arch = "x86_64")]
     {
-        use std::arch::x86_64::{
-            __m256i, _mm256_and_si256, _mm256_cmpeq_epi16, _mm256_loadu_si256,
-            _mm256_movemask_epi8, _mm256_packus_epi16, _mm256_permute4x64_epi64, _mm256_set1_epi16,
-            _mm256_setzero_si256, _mm256_storeu_si256,
-        };
+        let byte_len = name_raw.len();
+        let len = byte_len / 2;
 
-        let len = name_raw.len() / 2;
+        if len == 0 {
+            return None;
+        }
 
-        if len <= 16 && len > 0 && is_x86_feature_detected!("avx2") {
-            unsafe {
-                let vec = _mm256_loadu_si256(name_raw.as_ptr().cast::<__m256i>());
-                let mask = _mm256_set1_epi16(0xFF00u16 as i16);
-                let test = _mm256_and_si256(vec, mask);
+        if is_x86_feature_detected!("avx2") {
+            if byte_len >= 32 && len <= 16 {
+                // 256-bit AVX2 registers for medium-length names
+                unsafe {
+                    use std::arch::x86_64::{
+                        __m256i, _mm256_and_si256, _mm256_cmpeq_epi16, _mm256_loadu_si256,
+                        _mm256_movemask_epi8, _mm256_packus_epi16, _mm256_permute4x64_epi64,
+                        _mm256_set1_epi16, _mm256_setzero_si256, _mm256_storeu_si256,
+                    };
+                    let vec = _mm256_loadu_si256(name_raw.as_ptr().cast::<__m256i>());
+                    let mask = _mm256_set1_epi16(0xFF00u16 as i16);
+                    let test = _mm256_and_si256(vec, mask);
 
-                let zero = _mm256_setzero_si256();
-                let cmp = _mm256_cmpeq_epi16(test, zero);
+                    let zero = _mm256_setzero_si256();
+                    let cmp = _mm256_cmpeq_epi16(test, zero);
 
-                let move_mask = _mm256_movemask_epi8(cmp);
-                if move_mask == -1 {
-                    let packed = _mm256_packus_epi16(vec, zero);
-                    let permuted = _mm256_permute4x64_epi64(packed, 0xD8);
+                    let move_mask = _mm256_movemask_epi8(cmp);
+                    if move_mask == -1 {
+                        let packed = _mm256_packus_epi16(vec, zero);
+                        let permuted = _mm256_permute4x64_epi64(packed, 0xD8);
 
-                    let mut ascii_buf = [0u8; 32];
-                    _mm256_storeu_si256(ascii_buf.as_mut_ptr().cast::<__m256i>(), permuted);
+                        let mut ascii_buf = [0u8; 32];
+                        _mm256_storeu_si256(ascii_buf.as_mut_ptr().cast::<__m256i>(), permuted);
 
-                    // Skip redundant sequential validation since vector mask proved ASCII
-                    let ascii_str = std::str::from_utf8_unchecked(&ascii_buf[..len]);
-                    return Some(CompactString::new(ascii_str));
+                        return Some(CompactString::new(std::str::from_utf8_unchecked(
+                            &ascii_buf[..len],
+                        )));
+                    }
+                }
+            } else if byte_len >= 16 && len <= 8 {
+                // 128-bit SSE registers to process short file names safely
+                unsafe {
+                    use std::arch::x86_64::{
+                        __m128i, _mm_and_si128, _mm_cmpeq_epi16, _mm_loadu_si128,
+                        _mm_movemask_epi8, _mm_packus_epi16, _mm_set1_epi16, _mm_setzero_si128,
+                        _mm_storeu_si128,
+                    };
+                    let vec = _mm_loadu_si128(name_raw.as_ptr().cast::<__m128i>());
+                    let mask = _mm_set1_epi16(0xFF00u16 as i16);
+                    let test = _mm_and_si128(vec, mask);
+
+                    let zero = _mm_setzero_si128();
+                    let cmp = _mm_cmpeq_epi16(test, zero);
+
+                    let move_mask = _mm_movemask_epi8(cmp);
+                    if move_mask == 0xFFFF {
+                        let packed = _mm_packus_epi16(vec, zero);
+
+                        let mut ascii_buf = [0u8; 16];
+                        _mm_storeu_si128(ascii_buf.as_mut_ptr().cast::<__m128i>(), packed);
+
+                        return Some(CompactString::new(std::str::from_utf8_unchecked(
+                            &ascii_buf[..len],
+                        )));
+                    }
                 }
             }
         }
@@ -212,7 +246,7 @@ fn decode_utf16_avx2(name_raw: &[u8]) -> Option<CompactString> {
     None
 }
 
-/// Decodes UTF-16 filenames using AVX2 SIMD registers as the primary path,
+/// Decodes UTF-16 filenames using AVX2/SSE SIMD registers as the primary path,
 /// falling back to scalar stack buffers and wide conversion only if wide characters are present.
 #[inline]
 fn decode_utf16_name_to_compact_string(name_raw: &[u8]) -> CompactString {
@@ -221,10 +255,8 @@ fn decode_utf16_name_to_compact_string(name_raw: &[u8]) -> CompactString {
         return CompactString::new("");
     }
 
-    // 1. Explicit AVX2 SIMD Fast Path (Covers >90% of files)
-    if len <= 16
-        && let Some(s) = decode_utf16_avx2(name_raw)
-    {
+    // 1. Explicit SIMD Fast Paths (Safe SSE/AVX2)
+    if let Some(s) = decode_utf16_simd(name_raw) {
         return s;
     }
 
