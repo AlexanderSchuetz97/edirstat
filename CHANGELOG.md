@@ -129,6 +129,7 @@ All notable changes to **eDirStat** will be documented in this file.
 
 #### Documentation & Build Pipelines
 - **🍏 macOS Packaging:** Fixed incorrect icon paths in the macOS CI/CD release configuration.
+- **🧪 CI/CD Toolchain Pinning:** Updated CI/CD test and release workflows to compile with `nightly-2026-06-13` to match the local toolchain.
 - **📝 Clippy Warnings in Docs:** Fixed documentation formatting and naming to eliminate Clippy lints.
 - **🧪 Clippy Lints:** Resolved new miscellaneous Clippy warnings introduced by the latest Rust nightly compiler.
 
