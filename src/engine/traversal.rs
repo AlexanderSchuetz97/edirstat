@@ -545,7 +545,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         // If running as root skip this test.
-        if unsafe { libc::getuid() } == 0 {
+        let is_root = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .is_some_and(|uid| uid == 0);
+
+        if is_root {
             return Ok(());
         }
 
