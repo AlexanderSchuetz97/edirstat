@@ -52,6 +52,7 @@ rfd = "0.17.2"
 smallvec = "1.15.2"
 thiserror = "2.0.18"
 trash = "5.2.6"
+uzers = "0.12.2"
 xgx_intern = "0.6.3"
 
 # feature: online

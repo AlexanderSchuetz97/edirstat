@@ -1653,29 +1653,17 @@ fn get_unix_metadata(path_str: &str) -> Option<(String, String, String)> {
     let gid = metadata.gid();
     let mode = metadata.mode();
 
-    // Query UID natively
-    let user = unsafe {
-        let passwd = libc::getpwuid(uid);
-        if passwd.is_null() || (*passwd).pw_name.is_null() {
-            uid.to_string()
-        } else {
-            std::ffi::CStr::from_ptr((*passwd).pw_name)
-                .to_string_lossy()
-                .into_owned()
-        }
-    };
+    // Query UID natively and safely
+    let user = uzers::get_user_by_uid(uid).map_or_else(
+        || uid.to_string(),
+        |u| u.name().to_string_lossy().into_owned(),
+    );
 
-    // Query GID natively
-    let group = unsafe {
-        let grp = libc::getgrgid(gid);
-        if grp.is_null() || (*grp).gr_name.is_null() {
-            gid.to_string()
-        } else {
-            std::ffi::CStr::from_ptr((*grp).gr_name)
-                .to_string_lossy()
-                .into_owned()
-        }
-    };
+    // Query GID natively and safely
+    let group = uzers::get_group_by_gid(gid).map_or_else(
+        || gid.to_string(),
+        |g| g.name().to_string_lossy().into_owned(),
+    );
 
     let file_type_char = if metadata.is_dir() {
         'd'
