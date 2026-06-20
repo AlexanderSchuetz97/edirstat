@@ -1,0 +1,24 @@
+{
+  "name": "edirstat-web",
+  "version": "2.0.0",
+  "description": "eDirStat Static Landing Page",
+  "main": "index.js",
+  "scripts": {
+    "dev:assets": "vite build --watch",
+    "dev:zola": "zola serve",
+    "dev": "concurrently \"npm run dev:assets\" \"npm run dev:zola\"",
+    "build:assets": "vite build",
+    "build:zola": "zola build",
+    "build": "npm run build:assets && npm run build:zola"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "lucide": "^1.21.0"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3",
+    "vite": "^8.0.16"
+  }
+}

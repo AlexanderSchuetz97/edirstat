@@ -1,2 +1,5 @@
 /target
 /workspace
+/web/node_modules
+/web/static
+/web/public
