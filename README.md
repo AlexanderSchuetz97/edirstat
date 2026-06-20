@@ -10,9 +10,11 @@
 
 Unlike traditional analyzers that crawl sequentially, **eDirStat** is engineered from the ground up for modern multi-core systems. It couples a highly optimized, work-stealing multithreaded directory walker with a zero-copy arena data structure. This allows you to scan millions of files, locate space-wasting files using a treemap diagram (among other plots), identify duplicate files, and save or load system snapshots in milliseconds using compressed snapshots.
 
-[**Up to 53.7x speedup** vs `WinDirStat`](#benchmarks)
+[**Up to 53.7x speedup** vs `WinDirStat`](#vs-windirstat-v11280-same-video-as-above)
 
-[**Up to 9.6x speedup** vs `QDirStat`](#benchmarks)
+[**Up to 9.6x speedup** vs `QDirStat`](#vs-qdirstat-v2001)
+
+[**Up to 2.5x speedup** vs `WizTree`](#vs-wiztree-v431)
 
 ---
 
