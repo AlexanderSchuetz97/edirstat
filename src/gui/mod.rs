@@ -191,7 +191,7 @@ impl GuiApp {
         let pending_initial_path = None;
 
         #[cfg(target_os = "windows")]
-        let active_modal = if crate::gui::modals::is_elevated() {
+        let active_modal = if cli_or_gui::is_elevated() {
             None
         } else {
             Some(ActiveModal::AdminWarning)

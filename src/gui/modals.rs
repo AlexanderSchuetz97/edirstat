@@ -1577,49 +1577,6 @@ impl GuiApp {
     }
 }
 
-// 2. Add these elevation check and relaunch helpers (safe for all platforms)
-#[cfg(target_os = "windows")]
-#[must_use]
-pub fn is_elevated() -> bool {
-    use std::mem;
-
-    use windows::Win32::{
-        Foundation::CloseHandle,
-        Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation},
-        System::Threading::{GetCurrentProcess, OpenProcessToken},
-    };
-
-    unsafe {
-        let mut token = windows::Win32::Foundation::HANDLE::default();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token).is_ok() {
-            let mut elevation: TOKEN_ELEVATION = mem::zeroed();
-            let mut return_length = 0;
-            let info_size = mem::size_of::<TOKEN_ELEVATION>() as u32;
-
-            let success = GetTokenInformation(
-                token,
-                TokenElevation,
-                Some((&raw mut elevation).cast()),
-                info_size,
-                &raw mut return_length,
-            );
-
-            let _ = CloseHandle(token);
-
-            if success.is_ok() {
-                return elevation.TokenIsElevated != 0;
-            }
-        }
-    }
-    false
-}
-
-#[cfg(not(target_os = "windows"))]
-#[must_use]
-pub const fn is_elevated() -> bool {
-    true // Treat non-Windows targets as elevated to bypass the warning modal
-}
-
 #[cfg(target_os = "windows")]
 pub fn relaunch_as_admin() -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt as _;
