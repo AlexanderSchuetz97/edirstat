@@ -71,6 +71,7 @@ struct TlCacheEntry {
 }
 
 thread_local! {
+    #[cfg_attr(windows, allow(clippy::missing_const_for_thread_local))]
     static TL_INTERN_CACHE: std::cell::RefCell<[Option<TlCacheEntry>; 2048]> = const { std::cell::RefCell::new(
         const { [const { None }; 2048] }
     ) };
