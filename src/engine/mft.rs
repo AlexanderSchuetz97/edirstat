@@ -654,7 +654,8 @@ fn process_mft_chunks(
 
     // Consume chunks and parse records concurrently using Rayon threads
     rayon::scope(|scope| {
-        let mft_entries_ptr = mft_entries.as_mut_ptr() as usize;
+        let mut remaining_slice = mft_entries.as_mut_slice();
+        let mut current_pos = 0;
 
         while let Ok(chunk) = filled_rx.recv() {
             let records_count = chunk.bytes_read / MFT_RECORD_SIZE;
@@ -664,104 +665,117 @@ fn process_mft_chunks(
             let sharded_pool_clone = sharded_pool.clone();
             let empty_tx_clone = empty_tx.clone();
 
-            scope.spawn(move |_| {
-                // Assert safe slice bounds to prevent any possible memory overflow
-                let safe_records_count = records_count.min(max_records as usize - start_idx);
-                let target_slice = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        (mft_entries_ptr as *mut Option<MftEntry>).add(start_idx),
-                        safe_records_count,
-                    )
-                };
+            let safe_records_count = records_count.min(max_records as usize - start_idx);
 
-                let mut chunk = chunk;
-                let chunk_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut chunk.buffer);
-                let mut local_links = Vec::new();
+            // Calculate any gap introduced by sparse runs
+            let gap = start_idx.saturating_sub(current_pos);
+            let total_needed = gap + safe_records_count;
 
-                for (i, entry_slot) in target_slice.iter_mut().enumerate() {
-                    let offset = i * MFT_RECORD_SIZE;
-                    if offset + MFT_RECORD_SIZE <= chunk.bytes_read {
-                        let record_buffer = &mut chunk_bytes[offset..offset + MFT_RECORD_SIZE];
+            // Take the slice temporarily to split it with its original lifetime
+            let slice = std::mem::take(&mut remaining_slice);
 
-                        // Match raw pointer verification safely via standard arrays
-                        if record_buffer[..4] == *b"FILE" && apply_fixup(record_buffer) {
-                            let flags = u16::from_le_bytes([record_buffer[22], record_buffer[23]]);
-                            if (flags & 1) != 0 {
-                                let base_file_ref = u64::from_le_bytes([
-                                    record_buffer[32],
-                                    record_buffer[33],
-                                    record_buffer[34],
-                                    record_buffer[35],
-                                    record_buffer[36],
-                                    record_buffer[37],
-                                    record_buffer[38],
-                                    record_buffer[39],
-                                ]);
-                                let base_record_id = base_file_ref & 0x0000_ffff_ffff_ffff;
+            if total_needed <= slice.len() {
+                let (gap_and_chunk, next_remaining) = slice.split_at_mut(total_needed);
+                let target_slice = &mut gap_and_chunk[gap..];
 
-                                if base_record_id == 0 {
-                                    let attrs = parse_attributes(record_buffer);
-                                    let extracted_links = extract_all_links_from_record(&attrs);
-                                    let is_dir = (flags & 2) != 0;
+                remaining_slice = next_remaining;
+                current_pos = start_idx + safe_records_count;
 
-                                    let mut modified = 0i64;
-                                    let mut created = 0i64;
-                                    let mut accessed = 0i64;
+                scope.spawn(move |_| {
+                    let mut chunk = chunk;
+                    let chunk_bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut chunk.buffer);
+                    let mut local_links = Vec::new();
 
-                                    for attr in &attrs {
-                                        if attr.ty == 0x10
-                                            && !attr.is_non_resident
-                                            && let Some((cre, mod_t, acc)) =
-                                                parse_standard_information_timestamps(attr.payload)
-                                        {
-                                            created = cre;
-                                            modified = mod_t;
-                                            accessed = acc;
-                                            break;
-                                        }
-                                    }
+                    for (i, entry_slot) in target_slice.iter_mut().enumerate() {
+                        let offset = i * MFT_RECORD_SIZE;
+                        if offset + MFT_RECORD_SIZE <= chunk.bytes_read {
+                            let record_buffer = &mut chunk_bytes[offset..offset + MFT_RECORD_SIZE];
 
-                                    if let Some(first) = extracted_links.first() {
-                                        let name_id =
-                                            sharded_pool_clone.get_or_insert(first.name.as_bytes());
-                                        let size = if is_dir { 0 } else { first.size };
+                            if record_buffer[..4] == *b"FILE" && apply_fixup(record_buffer) {
+                                let flags =
+                                    u16::from_le_bytes([record_buffer[22], record_buffer[23]]);
+                                if (flags & 1) != 0 {
+                                    let base_file_ref = u64::from_le_bytes([
+                                        record_buffer[32],
+                                        record_buffer[33],
+                                        record_buffer[34],
+                                        record_buffer[35],
+                                        record_buffer[36],
+                                        record_buffer[37],
+                                        record_buffer[38],
+                                        record_buffer[39],
+                                    ]);
+                                    let base_record_id = base_file_ref & 0x0000_ffff_ffff_ffff;
 
-                                        let mut entry_flags = 0u8;
-                                        if is_dir {
-                                            entry_flags |= 1;
-                                        }
-                                        if first.has_attr_list {
-                                            entry_flags |= 4;
+                                    if base_record_id == 0 {
+                                        let attrs = parse_attributes(record_buffer);
+                                        let extracted_links = extract_all_links_from_record(&attrs);
+                                        let is_dir = (flags & 2) != 0;
+
+                                        let mut modified = 0i64;
+                                        let mut created = 0i64;
+                                        let mut accessed = 0i64;
+
+                                        for attr in &attrs {
+                                            if attr.ty == 0x10
+                                                && !attr.is_non_resident
+                                                && let Some((cre, mod_t, acc)) =
+                                                    parse_standard_information_timestamps(
+                                                        attr.payload,
+                                                    )
+                                            {
+                                                created = cre;
+                                                modified = mod_t;
+                                                accessed = acc;
+                                                break;
+                                            }
                                         }
 
-                                        *entry_slot = Some(MftEntry {
-                                            size,
-                                            parent_record_id: first.parent_ref,
-                                            modified_timestamp: modified,
-                                            created_timestamp: created,
-                                            accessed_timestamp: accessed,
-                                            name_id: name_id.0,
-                                            flags: entry_flags,
-                                            _padding: [0; 3],
-                                        });
+                                        if let Some(first) = extracted_links.first() {
+                                            let name_id = sharded_pool_clone
+                                                .get_or_insert(first.name.as_bytes());
+                                            let size = if is_dir { 0 } else { first.size };
 
-                                        if extracted_links.len() > 1 {
-                                            local_links.extend(extracted_links[1..].to_vec());
+                                            let mut entry_flags = 0u8;
+                                            if is_dir {
+                                                entry_flags |= 1;
+                                            }
+                                            if first.has_attr_list {
+                                                entry_flags |= 4;
+                                            }
+
+                                            *entry_slot = Some(MftEntry {
+                                                size,
+                                                parent_record_id: first.parent_ref,
+                                                modified_timestamp: modified,
+                                                created_timestamp: created,
+                                                accessed_timestamp: accessed,
+                                                name_id: name_id.0,
+                                                flags: entry_flags,
+                                                _padding: [0; 3],
+                                            });
+
+                                            if extracted_links.len() > 1 {
+                                                local_links.extend(extracted_links[1..].to_vec());
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                if !local_links.is_empty() {
-                    side_channel_links_clone.lock().extend(local_links);
-                }
+                    if !local_links.is_empty() {
+                        side_channel_links_clone.lock().extend(local_links);
+                    }
 
-                // Recycle the empty page buffer
-                let _ = empty_tx_clone.send(chunk.buffer);
-            });
+                    // Recycle the empty page buffer
+                    let _ = empty_tx_clone.send(chunk.buffer);
+                });
+            } else {
+                // Restore the slice if bounds checking fails
+                remaining_slice = slice;
+            }
 
             let current_id = start_idx + records_count;
             if current_id.is_multiple_of(20000) {
