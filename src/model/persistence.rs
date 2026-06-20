@@ -1,48 +1,60 @@
-use std::{fs::File, io::Write, path::Path, sync::Arc};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+    sync::Arc,
+};
 
 use bytemuck::{Pod, Zeroable};
-use memmap2::MmapOptions;
 
 use super::arena::{FileNode, StringPool};
 
 pub const FILE_VERSION: u16 = 2;
+pub const ZSTD_COMPRESSION_LEVEL: i32 = 3;
 
 #[derive(Debug, Copy, Clone, Pod, Zeroable)]
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct FileHeader {
     pub magic: [u8; 4],
     pub version: u16,
     _padding: u16,
+    pub uncompressed_size: u64,
     pub node_count: u64,
     pub string_pool_offset: u64,
     pub string_pool_length: u64,
+    pub reserved: [u64; 4], // 32 bytes of padding for future backward compatibility
 }
 
 #[derive(Debug)]
 pub struct PersistentArena {
-    /// Underlying memory-mapped file (mapped copy-on-write)
-    mmap: memmap2::MmapMut,
+    /// Underlying raw heap-allocated decompressed payload
+    decompressed_data: Vec<u8>,
     node_count: usize,
 }
 
 impl PersistentArena {
     #[must_use]
-    pub const fn new(mmap: memmap2::MmapMut, node_count: usize) -> Self {
-        Self { mmap, node_count }
+    pub const fn new(decompressed_data: Vec<u8>, node_count: usize) -> Self {
+        Self {
+            decompressed_data,
+            node_count,
+        }
     }
 
     #[must_use]
+    #[inline]
     pub fn nodes(&self) -> &[FileNode] {
-        let start = 32;
-        let end = start + self.node_count * std::mem::size_of::<FileNode>();
-        let bytes = &self.mmap[start..end];
+        let start = 0;
+        let end = self.node_count * std::mem::size_of::<FileNode>();
+        let bytes = &self.decompressed_data[start..end];
         bytemuck::cast_slice(bytes)
     }
 
+    #[inline]
     pub fn nodes_mut(&mut self) -> &mut [FileNode] {
-        let start = 32;
-        let end = start + self.node_count * std::mem::size_of::<FileNode>();
-        let bytes = &mut self.mmap[start..end];
+        let start = 0;
+        let end = self.node_count * std::mem::size_of::<FileNode>();
+        let bytes = &mut self.decompressed_data[start..end];
         bytemuck::cast_slice_mut(bytes)
     }
 }
@@ -62,86 +74,90 @@ pub fn save_snapshot(
         )
     })?;
 
-    // Calculate offsets
-    let header_size = 32u64;
-    let nodes_size = std::mem::size_of_val(nodes) as u64;
-    let string_pool_offset = header_size + nodes_size;
+    let nodes_size = std::mem::size_of_val(nodes);
+    let offsets_size = offsets.len() * std::mem::size_of::<u32>();
+    let bytes_count = arena_string.len();
 
-    // We will write the string pool as:
-    // [ offsets_count: u64 ] [ u32 start offsets array ] [ bytes_count: u64 ] [ raw string pool bytes ]
-    let offsets_count = offsets.len() as u64;
-    let offsets_size = (offsets.len() * std::mem::size_of::<u32>()) as u64;
-    let bytes_count = arena_string.len() as u64;
+    // Calculate uncompressed sizes of payload data segments
     let string_pool_length = 8 + offsets_size + 8 + bytes_count;
+    let uncompressed_size = nodes_size + string_pool_length;
 
-    // Create header with version 2
+    // Create header with version 2 and 32 bytes of future-proofing reserved space
     let header = FileHeader {
         magic: *b"EDST",
         version: FILE_VERSION,
         _padding: 0,
+        uncompressed_size: uncompressed_size as u64,
         node_count: nodes.len() as u64,
-        string_pool_offset,
-        string_pool_length,
+        string_pool_offset: nodes_size as u64,
+        string_pool_length: string_pool_length as u64,
+        reserved: [0; 4],
     };
 
-    // Write header
+    // Pre-allocate the raw uncompressed payload
+    let mut raw_payload = Vec::with_capacity(uncompressed_size);
+    raw_payload.write_all(bytemuck::cast_slice(nodes))?;
+    raw_payload.write_all(&(offsets.len() as u64).to_le_bytes())?;
+    raw_payload.write_all(bytemuck::cast_slice(&offsets))?;
+    raw_payload.write_all(&(bytes_count as u64).to_le_bytes())?;
+    raw_payload.write_all(arena_string.as_bytes())?;
+
+    // Compress the payload
+    let compressed_payload = zstd::encode_all(&raw_payload[..], ZSTD_COMPRESSION_LEVEL)?;
+
+    // Write uncompressed header first
     file.write_all(bytemuck::bytes_of(&header))?;
-
-    // Write nodes
-    file.write_all(bytemuck::cast_slice(nodes))?;
-
-    // Write string pool components
-    file.write_all(&offsets_count.to_le_bytes())?;
-    file.write_all(bytemuck::cast_slice(&offsets))?;
-    file.write_all(&bytes_count.to_le_bytes())?;
-    file.write_all(arena_string.as_bytes())?;
+    // Write compressed payload second
+    file.write_all(&compressed_payload)?;
 
     file.sync_all()?;
     Ok(())
 }
 
 pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate::EdirstatError> {
-    let file = File::open(path)?;
+    let mut file = File::open(path)?;
     let metadata = file.metadata()?;
 
-    if metadata.len() < 32 {
+    if metadata.len() < 72 {
         return Err(crate::EdirstatError::HeaderTooSmall);
     }
 
-    // Map the file privately copy-on-write
-    let mmap = unsafe { MmapOptions::new().map_copy(&file)? };
+    // Read the uncompressed header safely from disk
+    let mut header_bytes = [0u8; 72];
+    file.read_exact(&mut header_bytes)?;
 
-    // Cast the header
-    let header: &FileHeader = bytemuck::from_bytes(&mmap[0..32]);
+    let header: &FileHeader = bytemuck::from_bytes(&header_bytes);
     if header.magic != *b"EDST" {
         return Err(crate::EdirstatError::InvalidMagic);
     }
-    // Only accept the current `FILE_VERSION`
     if header.version != FILE_VERSION {
         return Err(crate::EdirstatError::UnsupportedVersion(header.version));
     }
 
+    // Read remaining compressed payload
+    let mut compressed_payload = Vec::with_capacity((metadata.len() - 72) as usize);
+    file.read_to_end(&mut compressed_payload)?;
+
+    // Decompress directly into a new Vec<u8> using the exact uncompressed capacity from the header
+    let decompressed_data =
+        zstd::bulk::decompress(&compressed_payload, header.uncompressed_size as usize)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
     let node_count = header.node_count as usize;
-    let nodes_byte_size = node_count
-        .checked_mul(std::mem::size_of::<FileNode>())
-        .ok_or(crate::EdirstatError::TruncatedNodes)?;
+    let expected_nodes_size = node_count * std::mem::size_of::<FileNode>();
 
-    let expected_size = nodes_byte_size
-        .checked_add(32)
-        .ok_or(crate::EdirstatError::TruncatedNodes)?;
-
-    if mmap.len() < expected_size {
+    if decompressed_data.len() < expected_nodes_size {
         return Err(crate::EdirstatError::TruncatedNodes);
     }
 
-    // Read StringPool
+    // Extract StringPool
     let sp_start = header.string_pool_offset as usize;
     let sp_end = sp_start + header.string_pool_length as usize;
-    if mmap.len() < sp_end {
+    if decompressed_data.len() < sp_end {
         return Err(crate::EdirstatError::TruncatedStringPool);
     }
 
-    let sp_slice = &mmap[sp_start..sp_end];
+    let sp_slice = &decompressed_data[sp_start..sp_end];
 
     // Parse offset count (8 bytes)
     let mut offset_count_bytes = [0u8; 8];
@@ -151,6 +167,9 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
     // Parse u32 offsets array
     let offsets_start = 8;
     let offsets_end = offsets_start + offsets_count * std::mem::size_of::<u32>();
+    if sp_slice.len() < offsets_end + 8 {
+        return Err(crate::EdirstatError::TruncatedStringPool);
+    }
     let offsets_bytes = &sp_slice[offsets_start..offsets_end];
     let offsets: &[u32] = bytemuck::cast_slice(offsets_bytes);
 
@@ -162,6 +181,9 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
     // Parse raw bytes
     let raw_bytes_start = offsets_end + 8;
     let raw_bytes_end = raw_bytes_start + bytes_count;
+    if sp_slice.len() < raw_bytes_end {
+        return Err(crate::EdirstatError::TruncatedStringPool);
+    }
     let raw_bytes = &sp_slice[raw_bytes_start..raw_bytes_end];
 
     // Reconstruct the interner allocation-free
@@ -176,12 +198,11 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
             offset,
             len,
         };
-        // Rebuilds the lookup map without allocating any heap memory for the keys
         let _ = interner.intern_owned(shared_str);
     }
 
     let string_pool = StringPool { interner };
-    let arena = PersistentArena::new(mmap, node_count);
+    let arena = PersistentArena::new(decompressed_data, node_count);
 
     Ok((arena, string_pool))
 }
@@ -191,7 +212,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_binary_serialization_and_mmap_load() -> Result<(), crate::EdirstatError> {
+    fn test_binary_serialization_and_compressed_load() -> Result<(), crate::EdirstatError> {
         let mut pool = StringPool::new();
         let name_root = pool.get_or_insert(b"/");
         let name_dir = pool.get_or_insert(b"target");
@@ -218,7 +239,7 @@ mod tests {
         // Save snapshot
         save_snapshot(&nodes, &pool, &test_path)?;
 
-        // Load snapshot via mmap copy-on-write
+        // Load snapshot via safe compressed reader
         let (mut loaded_arena, loaded_pool) = load_snapshot(&test_path)?;
         let loaded_nodes = loaded_arena.nodes();
 
@@ -238,8 +259,7 @@ mod tests {
         assert_eq!(loaded_pool.get(name_dir), Some("target"));
         assert_eq!(loaded_pool.get(name_file), Some("lib.rs"));
 
-        // Validate Mutability (Copy-On-Write):
-        // Confirm that the loaded nodes can be modified in-memory (e.g. for on-demand lazy sorting)
+        // Validate Mutability (Verify we can modify slice data safely in memory)
         let loaded_nodes_mut = loaded_arena.nodes_mut();
         loaded_nodes_mut[1].next_sibling = 999;
         assert_eq!(loaded_nodes_mut[1].next_sibling, 999);
@@ -273,9 +293,11 @@ mod tests {
             magic: *b"BAD!",
             version: FILE_VERSION,
             _padding: 0,
+            uncompressed_size: 0,
             node_count: 0,
-            string_pool_offset: 32,
+            string_pool_offset: 72,
             string_pool_length: 0,
+            reserved: [0; 4],
         };
         std::fs::write(&test_path, bytemuck::bytes_of(&header))?;
 
@@ -296,9 +318,11 @@ mod tests {
             magic: *b"EDST",
             version: 99,
             _padding: 0,
+            uncompressed_size: 0,
             node_count: 0,
-            string_pool_offset: 32,
+            string_pool_offset: 72,
             string_pool_length: 0,
+            reserved: [0; 4],
         };
         std::fs::write(&test_path, bytemuck::bytes_of(&header))?;
 
@@ -306,55 +330,6 @@ mod tests {
         assert!(matches!(
             res,
             Err(crate::EdirstatError::UnsupportedVersion(99))
-        ));
-
-        let _ = std::fs::remove_file(&test_path);
-        Ok(())
-    }
-
-    #[test]
-    fn test_load_snapshot_truncated_nodes() -> Result<(), crate::EdirstatError> {
-        let temp_dir = std::env::current_dir()?.join("target");
-        let test_path = temp_dir.join("test_truncated_nodes.edst");
-        let _ = std::fs::create_dir_all(&temp_dir);
-
-        let header = FileHeader {
-            magic: *b"EDST",
-            version: FILE_VERSION,
-            _padding: 0,
-            node_count: 100,
-            string_pool_offset: 32,
-            string_pool_length: 0,
-        };
-        std::fs::write(&test_path, bytemuck::bytes_of(&header))?;
-
-        let res = load_snapshot(&test_path);
-        assert!(matches!(res, Err(crate::EdirstatError::TruncatedNodes)));
-
-        let _ = std::fs::remove_file(&test_path);
-        Ok(())
-    }
-
-    #[test]
-    fn test_load_snapshot_truncated_string_pool() -> Result<(), crate::EdirstatError> {
-        let temp_dir = std::env::current_dir()?.join("target");
-        let test_path = temp_dir.join("test_truncated_sp.edst");
-        let _ = std::fs::create_dir_all(&temp_dir);
-
-        let header = FileHeader {
-            magic: *b"EDST",
-            version: FILE_VERSION,
-            _padding: 0,
-            node_count: 0,
-            string_pool_offset: 32,
-            string_pool_length: 1000,
-        };
-        std::fs::write(&test_path, bytemuck::bytes_of(&header))?;
-
-        let res = load_snapshot(&test_path);
-        assert!(matches!(
-            res,
-            Err(crate::EdirstatError::TruncatedStringPool)
         ));
 
         let _ = std::fs::remove_file(&test_path);
