@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 // -- Clippy Denies --
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 // --- Clippy Lint Groups & Specific Warnings ---
