@@ -10,9 +10,9 @@
 
 Unlike traditional analyzers that crawl sequentially, **eDirStat** is engineered from the ground up for modern multi-core systems. It couples a highly optimized, work-stealing multithreaded directory walker with a zero-copy arena data structure. This allows you to scan millions of files, locate space-wasting files using a treemap diagram (among other plots), identify duplicate files, and save or load system snapshots in milliseconds using compressed snapshots.
 
-[**53.7x speedup** vs `WinDirStat`](#benchmarks)
+[**Up to 53.7x speedup** vs `WinDirStat`](#benchmarks)
 
-[**6.0x to 9.6x speedup** vs `QDirStat`](#benchmarks)
+[**Up to 9.6x speedup** vs `QDirStat`](#benchmarks)
 
 ---
 
@@ -20,7 +20,7 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is engineered
 
 <https://github.com/user-attachments/assets/72ab0f7a-0dac-48ae-886c-f3f8cb22ad49>
 
-**`eDirStat` is 53x faster than `WinDirStat`.** And, no, that's not "time to first data"-- that's a complete and equivalent scan. `eDirStat` uses a modern multi-threaded work-stealing algorithm paired with custom disk drivers. `eDirStat` really is that much faster. While the effect is exaggerated on an SSD, you'll still experience dramatic (usually >10x faster) speedups on traditional hard drives too.
+**`eDirStat` is up to 53x faster than `WinDirStat`.** And, no, that's not "time to first data"-- that's a complete and equivalent scan. `eDirStat` uses a modern multi-threaded work-stealing algorithm paired with custom disk drivers. `eDirStat` really is that much faster. While the effect is exaggerated on an SSD, you'll still experience dramatic (usually >10x faster) speedups on traditional hard drives too.
 
 ---
 
@@ -215,7 +215,7 @@ A dense Windows primary drive.
 
 `NVMe PCIe Gen3 [ntfs]`
 
-**53.7x speedup**
+**Up to 53.7x speedup**
 
 <https://github.com/user-attachments/assets/72ab0f7a-0dac-48ae-886c-f3f8cb22ad49>
 
@@ -225,7 +225,7 @@ A dense Windows primary drive.
 
 `NVMe PCIe Gen3 [ntfs]`
 
-**2.5x speedup**
+**Up to 2.5x speedup**
 
 <https://github.com/user-attachments/assets/2190e1d1-51ac-4b5e-89e6-80dfd1d9c8de>
 
@@ -241,7 +241,7 @@ To evaluate traversal performance, `edirstat` includes a custom comparison bench
 
 #### Results
 
-Across a diverse suite of storage devices and directory layouts, **eDirStat** consistently exceeds the performance of `QDirStat` in duplicate, delivering a consistent **6.0x to 9.6x speedup** in scan time!
+Across a diverse suite of storage devices and directory layouts, **eDirStat** consistently exceeds the performance of `QDirStat` in duplicate, delivering up to a **9.6x speedup** (ranging from 6.0x to 9.6x) in scan time!
 
 Whether crawling highly nested code repositories on high-speed `NVMe` drives, game installations on SATA SSDs, or deep directory trees on enterprise HDDs, `edirstat`'s parallel, work-stealing multithreading model, allows it to remain the fastest disk usage analyzer available.
 
@@ -405,8 +405,17 @@ Speedup (QDirStat / eDirStat): 6.60x
 ==================================================
 ```
 
+> **Benchmark Disclaimer & Configuration:**
+> - Comparisons were conducted against **WinDirStat v1.1.2.80**, **WizTree v4.31**, and **QDirStat v2.0.01** under equivalent, controlled testing conditions with primed system caches.
+> - eDirStat is an independent open-source utility and is not associated with, sponsored by, or endorsed by the trademark holders of those projects.
+> - Performance measurements depend heavily on hardware setup, filesystem fragmentation, operating system scheduling, and disk caching behavior; individual test results may vary.
+
 ---
 
 ## 📝 License
 
 This project is licensed under the [MIT License](LICENSE).
+
+---
+
+*Disclaimer: WinDirStat, WizTree, and QDirStat are trademarks of their respective owners. eDirStat is an independent open-source project and is not affiliated with, sponsored by, or endorsed by the trademark holders.*
