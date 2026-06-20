@@ -10,7 +10,7 @@
 
 Unlike traditional analyzers that crawl sequentially, **eDirStat** is engineered from the ground up for modern multi-core systems. It couples a highly optimized, work-stealing multithreaded directory walker with a zero-copy arena data structure. This allows you to scan millions of files, locate space-wasting files using a treemap diagram (among other plots), identify duplicate files, and save or load system snapshots in milliseconds using compressed snapshots.
 
-[**26.9x speedup** vs `WinDirStat`](#benchmarks)
+[**53.7x speedup** vs `WinDirStat`](#benchmarks)
 
 [**6.0x to 9.6x speedup** vs `QDirStat`](#benchmarks)
 
@@ -20,7 +20,7 @@ Unlike traditional analyzers that crawl sequentially, **eDirStat** is engineered
 
 <https://github.com/user-attachments/assets/72ab0f7a-0dac-48ae-886c-f3f8cb22ad49>
 
-**`eDirStat` is 27x faster than `WinDirStat`.** And, no, that's not "time to first data"-- that's a complete and equivalent scan. `eDirStat` uses a modern multi-threaded work-stealing algorithm paired with custom disk drivers. `eDirStat` really is that much faster. While the effect is exaggerated on an SSD, you'll still experience dramatic (usually >10x faster) speedups on traditional hard drives too.
+**`eDirStat` is 53x faster than `WinDirStat`.** And, no, that's not "time to first data"-- that's a complete and equivalent scan. `eDirStat` uses a modern multi-threaded work-stealing algorithm paired with custom disk drivers. `eDirStat` really is that much faster. While the effect is exaggerated on an SSD, you'll still experience dramatic (usually >10x faster) speedups on traditional hard drives too.
 
 ---
 
@@ -215,7 +215,7 @@ A dense Windows primary drive.
 
 `NVMe PCIe Gen3 [ntfs]`
 
-**26.9x speedup**
+**53.7x speedup**
 
 <https://github.com/user-attachments/assets/72ab0f7a-0dac-48ae-886c-f3f8cb22ad49>
 
