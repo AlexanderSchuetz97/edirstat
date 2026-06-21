@@ -138,7 +138,7 @@ All notable changes to **eDirStat** will be documented in this file.
 - **⚙️ Toolchain Update:** Updated Rust nightly compiler toolchain to `nightly-2026-06-15`.
 - **📦 Dependency Cleanup:** Removed the direct dependency on `libc` as it is no longer required.
 - **📦 Dependency Upgrades:** Upgraded underlying project dependencies, including bumping `bytes` and `wayland-protocols` to their latest versions.
-- **📦 Dependency Upgrades:** Upgraded the `arrayvec` crate dependency to version `0.7.7`.
+- **📦 Dependency Upgrades:** Upgraded `arrayvec` to `0.7.7`, `sysinfo` to `0.39.4`, and `log` to `0.4.33`.
 - **📄 README Benchmarks Update:** Updated README benchmarks with program versions, a WizTree drag race video comparison, and updated WinDirStat speed multipliers.
 - **📄 Benchmark Disclaimers:** Added program versions and benchmark methodology disclaimers to the README and website.
 - **📦 Minimum Cargo Package Files:** Add `include` to `Cargo.toml` to include only necessary files in the package.
