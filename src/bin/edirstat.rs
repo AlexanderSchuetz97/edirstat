@@ -107,7 +107,7 @@ fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Er
 
 fn run_headless_scan_and_save(
     scan_path: &Path,
-    to_path: PathBuf,
+    mut to_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !scan_path.exists() {
         return Err(format!("Error: Scan path does not exist: {}", scan_path.display()).into());
@@ -125,6 +125,10 @@ fn run_headless_scan_and_save(
             scan_path.display()
         )
         .into());
+    }
+
+    if to_path.extension().is_none_or(|s| s != "edst") {
+        to_path = to_path.with_added_extension("edst");
     }
 
     println!("Headless scanning started for: {}", scan_path.display());
