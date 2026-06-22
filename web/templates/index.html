@@ -14,6 +14,7 @@
             <a href="#features" class="nav-link">Features</a>
             <a href="#simulator" class="nav-link">Simulator</a>
             <a href="#benchmarks" class="nav-link">Benchmarks</a>
+            <a href="#drag-races" class="nav-link">Videos</a>
             <a href="#guide" class="nav-link">Guide</a>
         </nav>
         <div class="header-actions">
@@ -361,6 +362,38 @@
         <div class="benchmark-disclaimer" style="margin-top: 32px; opacity: 0.5; font-size: 0.8rem; line-height: 1.5; text-align: left;">
             <strong>Benchmark Disclaimer & Configuration:</strong> 
             All comparisons were conducted against <strong>WinDirStat v1.1.2.80</strong>, <strong>WizTree v4.31</strong>, and <strong>QDirStat v2.0.01</strong> under equivalent, controlled testing conditions with primed system caches. eDirStat is an independent open-source utility and is not associated with, sponsored by, or endorsed by the trademark holders of those projects. Performance measurements depend heavily on hardware setup, filesystem fragmentation, operating system scheduling, and disk caching behavior; individual test results may vary.
+        </div>
+    </section>
+
+    <!-- Drag Races Section -->
+    <section id="drag-races" class="section">
+        <div class="section-header">
+            <h2 class="section-title">Performance Drag Races</h2>
+            <p class="section-subtitle">Watch eDirStat go head-to-head against WinDirStat, WizTree, and other tools in real-time speed comparisons.</p>
+        </div>
+        
+        <div class="drag-races-container">
+            <!-- Card 1: WinDirStat vs eDirStat -->
+            <div class="drag-race-card glass-card">
+                <div class="video-wrapper">
+                    <iframe src="https://www.youtube-nocookie.com/embed/T7fUh01_jG8" title="WinDirStat vs eDirStat: Drag Race" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen id="video-windirstat"></iframe>
+                </div>
+                <div class="drag-race-info">
+                    <h3 class="drag-race-title">WinDirStat vs eDirStat</h3>
+                    <p class="drag-race-desc">A side-by-side speed comparison scanning a large directory structure. Watch how eDirStat's multithreaded directory walker completes the scan in seconds, while WinDirStat lags behind due to single-threaded layout traversal and locking issues.</p>
+                </div>
+            </div>
+            
+            <!-- Card 2: WizTree vs eDirStat -->
+            <div class="drag-race-card glass-card">
+                <div class="video-wrapper">
+                    <iframe src="https://www.youtube-nocookie.com/embed/pxyJk6ipjNk" title="WizTree vs eDirStat: Drag Race" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen id="video-wiztree"></iframe>
+                </div>
+                <div class="drag-race-info">
+                    <h3 class="drag-race-title">WizTree vs eDirStat</h3>
+                    <p class="drag-race-desc">Comparing raw traversal speed on local SSD storage. eDirStat utilizes advanced work-stealing scheduling to saturate all CPU cores, executing a near-instant walk that matches or exceeds disk-level direct scanners.</p>
+                </div>
+            </div>
         </div>
     </section>
 
