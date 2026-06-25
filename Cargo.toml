@@ -76,7 +76,7 @@ semver = { version = "1", optional = true }
 
 # feature: profile-tracy
 tracy-client = { version = "0.18.4", optional = true }
-sysinfo = { version = "0.39.4", default-features = false, features = ["disk"] }
+sysinfo = { version = "0.39.5", default-features = false, features = ["disk"] }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 uzers = "0.12.2"
