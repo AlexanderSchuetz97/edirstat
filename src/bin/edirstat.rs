@@ -47,7 +47,7 @@ struct Args {
     #[arg(long)]
     benchmark: bool,
 
-    /// Destination path or directory to save the scanned snapshot file (bypasses GUI and exits)
+    /// Destination path or directory to save the scanned snapshot file (no-GUI/headless)
     #[arg(long)]
     to: Option<PathBuf>,
 }
