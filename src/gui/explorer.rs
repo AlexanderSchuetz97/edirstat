@@ -748,15 +748,19 @@ impl GuiApp {
                 let org_colors = &[];
                 let user_colors = &[];
 
-                let (responses, table) = builder
-                    .archived_headers(
-                        &self.table_state,
-                        provider.headers().iter().copied(),
-                        24.0,
-                        org_colors,
-                        user_colors,
-                    )
-                    .unwrap_or_else(|e| panic!("Failed to render tree headers: {e:?}"));
+                let (responses, table) = match builder.archived_headers(
+                    &self.table_state,
+                    provider.headers().iter().copied(),
+                    24.0,
+                    org_colors,
+                    user_colors,
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!("Failed to render tree headers: {e:?}");
+                        return;
+                    }
+                };
 
                 // 3. Process header responses back into state (triggers sorting & dirty-caching)
                 let _ = self.table_state.process_responses(&provider, responses);
