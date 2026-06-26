@@ -50,6 +50,10 @@ struct Args {
     /// Destination path or directory to save the scanned snapshot file (no-GUI/headless)
     #[arg(long)]
     to: Option<PathBuf>,
+
+    /// Disable Zstd compression for the output snapshot file (saves as uncompressed .edst)
+    #[arg(long)]
+    no_compression: bool,
 }
 
 fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
@@ -108,6 +112,7 @@ fn run_benchmark(path_opt: Option<PathBuf>) -> Result<(), Box<dyn std::error::Er
 fn run_headless_scan_and_save(
     scan_path: &Path,
     mut to_path: PathBuf,
+    no_compression: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !scan_path.exists() {
         return Err(format!("Error: Scan path does not exist: {}", scan_path.display()).into());
@@ -127,8 +132,9 @@ fn run_headless_scan_and_save(
         .into());
     }
 
-    if to_path.extension().is_none_or(|s| s != "edst") {
-        to_path = to_path.with_added_extension("edst");
+    let ext = if no_compression { "edst" } else { "edst.zst" };
+    if to_path.extension().is_none_or(|s| s != ext) {
+        to_path = to_path.with_added_extension(ext);
     }
 
     println!("Headless scanning started for: {}", scan_path.display());
@@ -154,11 +160,16 @@ fn run_headless_scan_and_save(
         let folder_name = scan_path
             .file_name()
             .map_or_else(|| "root".to_string(), |s| s.to_string_lossy().into_owned());
-        dest_path.push(format!("{folder_name}.edst"));
+        dest_path.push(format!("{folder_name}.{ext}"));
     }
 
     println!("Saving snapshot to: {}", dest_path.display());
-    edirstat::persistence::save_snapshot(&snapshot.nodes, &snapshot.string_pool, &dest_path)?;
+    edirstat::persistence::save_snapshot(
+        &snapshot.nodes,
+        &snapshot.string_pool,
+        &dest_path,
+        !no_compression,
+    )?;
     println!("Snapshot saved successfully.");
 
     Ok(())
@@ -186,7 +197,8 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         });
 
-        run_headless_scan_and_save(&scan_path, to_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+        run_headless_scan_and_save(&scan_path, to_path, args.no_compression)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         return Ok(());
     }

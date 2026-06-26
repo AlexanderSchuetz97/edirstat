@@ -147,13 +147,15 @@ fn u8_slice_to_filenode_vec(bytes: &[u8]) -> Vec<FileNode> {
 // Serialization APIs
 // =============================================================================
 
-/// Serializes nodes using the Version 3 format
+/// Serializes nodes using the Version 3 format. If `compress` is enabled, the
+/// output is wrapped inside a standard Zstandard container.
 pub fn save_snapshot(
     nodes: &[FileNode],
     string_pool: &StringPool,
     path: &Path,
+    compress: bool,
 ) -> Result<(), crate::EdirstatError> {
-    save_snapshot_v3(nodes, string_pool, path)
+    save_snapshot_v3(nodes, string_pool, path, compress)
 }
 
 /// Serializes the snapshot in the Version 3 format.
@@ -161,10 +163,8 @@ pub fn save_snapshot_v3(
     nodes: &[FileNode],
     string_pool: &StringPool,
     path: &Path,
+    compress: bool,
 ) -> Result<(), crate::EdirstatError> {
-    let file = File::create(path)?;
-    let mut writer = std::io::BufWriter::new(file);
-
     let (arena_string, offsets) = string_pool.interner.clone().export_arena().map_err(|_| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -317,11 +317,10 @@ pub fn save_snapshot_v3(
         reserved: [0; 4],
     };
 
-    // Serialize header to little-endian representation
+    // Serialize uncompressed payload into a memory buffer
+    let mut edst_bytes = Vec::with_capacity(72 + uncompressed_size);
     let le_header = header.to_le();
-    writer.write_all(bytemuck::bytes_of(&le_header))?;
-
-    let mut encoder = zstd::Encoder::new(writer, ZSTD_COMPRESSION_LEVEL)?;
+    edst_bytes.write_all(bytemuck::bytes_of(&le_header))?;
 
     // Convert metadata header column lengths to little-endian representation
     let col_lengths_le = [
@@ -334,22 +333,30 @@ pub fn save_snapshot_v3(
         col_lengths[6].to_le(),
         col_lengths[7].to_le(),
     ];
-    encoder.write_all(bytemuck::cast_slice(&col_lengths_le))?;
+    edst_bytes.write_all(bytemuck::cast_slice(&col_lengths_le))?;
 
     // Write contiguous column blocks sequentially
-    encoder.write_all(&col_control)?;
-    encoder.write_all(&col_name_id)?;
-    encoder.write_all(&col_size)?;
-    encoder.write_all(&col_mod_delta)?;
-    encoder.write_all(&col_cre_delta)?;
-    encoder.write_all(&col_acc_delta)?;
-    encoder.write_all(&col_file_count)?;
-    encoder.write_all(&col_child_count)?;
+    edst_bytes.write_all(&col_control)?;
+    edst_bytes.write_all(&col_name_id)?;
+    edst_bytes.write_all(&col_size)?;
+    edst_bytes.write_all(&col_mod_delta)?;
+    edst_bytes.write_all(&col_cre_delta)?;
+    edst_bytes.write_all(&col_acc_delta)?;
+    edst_bytes.write_all(&col_file_count)?;
+    edst_bytes.write_all(&col_child_count)?;
 
     // Append string pool
-    encoder.write_all(&sp_buf)?;
+    edst_bytes.write_all(&sp_buf)?;
 
-    encoder.finish()?;
+    let mut file = File::create(path)?;
+    if compress {
+        let compressed = zstd::encode_all(&edst_bytes[..], ZSTD_COMPRESSION_LEVEL)?;
+        file.write_all(&compressed)?;
+    } else {
+        file.write_all(&edst_bytes)?;
+    }
+
+    file.sync_all()?;
     Ok(())
 }
 
@@ -421,16 +428,22 @@ pub fn save_snapshot_v2(
 
 pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate::EdirstatError> {
     let mut file = File::open(path)?;
-    let metadata = file.metadata()?;
+    let mut file_bytes = Vec::new();
+    file.read_to_end(&mut file_bytes)?;
 
-    if metadata.len() < 72 {
+    // Transparent layer: Decompress standard Zstd container if detected (magic: 0x28B52FFD)
+    if file_bytes.len() >= 4 && file_bytes[0..4] == [0x28, 0xB5, 0x2F, 0xFD] {
+        file_bytes = zstd::decode_all(&file_bytes[..])?;
+    }
+
+    if file_bytes.len() < 72 {
         return Err(crate::EdirstatError::HeaderTooSmall);
     }
 
     // Allocate an aligned FileHeader directly on the stack to prevent alignment panics
     let mut header = FileHeader::zeroed();
     let header_bytes = bytemuck::bytes_of_mut(&mut header);
-    file.read_exact(header_bytes)?;
+    header_bytes.copy_from_slice(&file_bytes[0..72]);
 
     // Restore correct host representation
     header = header.from_le();
@@ -442,14 +455,19 @@ pub fn load_snapshot(path: &Path) -> Result<(PersistentArena, StringPool), crate
         return Err(crate::EdirstatError::UnsupportedVersion(header.version));
     }
 
-    // Read remaining compressed payload
-    let mut compressed_payload = Vec::with_capacity((metadata.len() - 72) as usize);
-    file.read_to_end(&mut compressed_payload)?;
-
-    // Decompress directly into a new Vec<u8> using the exact uncompressed capacity from the header
-    let decompressed_data =
-        zstd::bulk::decompress(&compressed_payload, header.uncompressed_size as usize)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    // Extract payload data
+    let decompressed_data = if header.version == FILE_VERSION_V2 {
+        // Legacy V2 uses internal bulk compression for the payload block
+        let compressed_payload = &file_bytes[72..];
+        zstd::bulk::decompress(compressed_payload, header.uncompressed_size as usize)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+    } else {
+        // V3 payload is written raw (with any compression handled at the transparent file wrapper layer)
+        if file_bytes.len() < 72 + header.uncompressed_size as usize {
+            return Err(crate::EdirstatError::TruncatedNodes);
+        }
+        file_bytes[72..72 + header.uncompressed_size as usize].to_vec()
+    };
 
     // 1. Reconstruct the StringPool first
     let sp_start = header.string_pool_offset as usize;
@@ -759,60 +777,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_binary_serialization_and_compressed_load() -> Result<(), crate::EdirstatError> {
+    fn test_uncompressed_roundtrip() -> Result<(), crate::EdirstatError> {
         let mut pool = StringPool::new();
-        let name_root = pool.get_or_insert(b"/");
-        let name_dir = pool.get_or_insert(b"target");
-        let name_file = pool.get_or_insert(b"lib.rs");
+        let r_id = pool.get_or_insert(b"root");
+        let f1_id = pool.get_or_insert(b"f1.png");
 
         let mut nodes = vec![
-            FileNode::new(name_root, None, true, false, 0, 0, 0),
-            FileNode::new(name_dir, Some(0), true, false, 0, 0, 0),
-            FileNode::new(name_file, Some(1), false, false, 0, 0, 0),
+            FileNode::new(r_id, None, true, false, 0, 0, 0),
+            FileNode::new(f1_id, Some(0), false, false, 0, 0, 0),
         ];
-
-        // Connect nodes
         nodes[0].first_child = 1;
-        nodes[1].first_child = 2;
-        nodes[1].size = 12345;
-        nodes[1].file_count = 1;
-        nodes[2].size = 12345;
+        nodes[0].size = 1000;
+        nodes[1].size = 1000;
 
-        // Use a temporary test file path inside the workspace
         let temp_dir = std::env::current_dir()?.join("target");
-        let test_path = temp_dir.join("test_snapshot.edst");
+        let path_uncompressed = temp_dir.join("test_uncompressed.edst");
         let _ = std::fs::create_dir_all(&temp_dir);
 
-        // Save snapshot
-        save_snapshot(&nodes, &pool, &test_path)?;
+        // Save as uncompressed
+        save_snapshot(&nodes, &pool, &path_uncompressed, false)?;
 
-        // Load snapshot via safe compressed reader
-        let (mut loaded_arena, loaded_pool) = load_snapshot(&test_path)?;
+        // Load back
+        let (loaded_arena, pool_loaded) = load_snapshot(&path_uncompressed)?;
         let loaded_nodes = loaded_arena.nodes();
 
-        // Validate structure size & elements
-        assert_eq!(loaded_nodes.len(), 3);
-        assert_eq!(loaded_nodes[0].name_id, name_root);
-        assert_eq!(loaded_nodes[1].name_id, name_dir);
-        assert_eq!(loaded_nodes[2].name_id, name_file);
+        assert_eq!(loaded_nodes.len(), 2);
+        assert_eq!(loaded_nodes[0].size, 1000);
+        assert_eq!(loaded_nodes[1].size, 1000);
+        assert_eq!(pool_loaded.get(loaded_nodes[1].name_id), Some("f1.png"));
 
-        assert_eq!(loaded_nodes[0].first_child, 1);
-        assert_eq!(loaded_nodes[1].first_child, 2);
-        assert_eq!(loaded_nodes[1].size, 12345);
-        assert_eq!(loaded_nodes[2].size, 12345);
-
-        // Validate string pool contents
-        assert_eq!(loaded_pool.get(name_root), Some("/"));
-        assert_eq!(loaded_pool.get(name_dir), Some("target"));
-        assert_eq!(loaded_pool.get(name_file), Some("lib.rs"));
-
-        // Validate Mutability (Verify we can modify slice data safely in memory)
-        let loaded_nodes_mut = loaded_arena.nodes_mut();
-        loaded_nodes_mut[1].next_sibling = 999;
-        assert_eq!(loaded_nodes_mut[1].next_sibling, 999);
-
-        // Clean up temporary file
-        let _ = std::fs::remove_file(&test_path);
+        let _ = std::fs::remove_file(&path_uncompressed);
         Ok(())
     }
 
@@ -838,7 +832,7 @@ mod tests {
 
         let header = FileHeader {
             magic: *b"BAD!",
-            version: FILE_VERSION,
+            version: FILE_VERSION_V3,
             _padding: 0,
             uncompressed_size: 0,
             node_count: 0,

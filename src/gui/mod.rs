@@ -838,10 +838,12 @@ impl eframe::App for GuiApp {
 
                 if ui.button("💾 Save Snapshot").clicked() && !snapshot.nodes.is_empty() {
                     let file_opt = FileDialog::new()
-                        .add_filter("eDirStat Snapshot", &["edst"])
+                        .add_filter("eDirStat Compressed Snapshot (*.edst.zst)", &["edst.zst"])
+                        .add_filter("eDirStat Uncompressed Snapshot (*.edst)", &["edst"])
                         .save_file();
                     if let Some(path) = file_opt {
-                        match save_snapshot(&snapshot.nodes, &snapshot.string_pool, &path) {
+                        let compress = path.extension().is_none_or(|ext| ext.eq_ignore_ascii_case("zst"));
+                        match save_snapshot(&snapshot.nodes, &snapshot.string_pool, &path, compress) {
                             Ok(()) => {}
                             Err(e) => {
                                 println!("Failed to save snapshot: {e}");
@@ -854,7 +856,7 @@ impl eframe::App for GuiApp {
 
                 if ui.button("📖 Load Snapshot").clicked() {
                     let file_opt = FileDialog::new()
-                        .add_filter("eDirStat Snapshot", &["edst"])
+                        .add_filter("eDirStat Snapshot", &["edst.zst", "edst"])
                         .pick_file();
                     if let Some(path) = file_opt && let Err(e) = self.load_snapshot_file(path) {
                         println!("Failed to load snapshot: {e}");
