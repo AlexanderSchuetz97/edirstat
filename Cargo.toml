@@ -55,6 +55,7 @@ egui-notify = "0.22.0"
 egui-table-kit = "0.2.1"
 egui_extras = { version = "0.34.3", features = ["svg_text"] }
 egui_plot = "0.35.0"
+fixedbitset = "0.5.7"
 include_packed = "0.1.6"
 mimalloc-rspack = { version = "0.2.4", features = ["v3"] }
 open = "5.3.5"

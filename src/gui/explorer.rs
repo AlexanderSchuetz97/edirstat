@@ -8,6 +8,7 @@ use egui_table_kit::{
     operations::{RowCallback, RowHierarchy, TableProvider},
     state::TableState,
 };
+use fixedbitset::FixedBitSet;
 use smallvec::SmallVec;
 
 use super::{ActiveModal, GuiApp, theme};
@@ -257,7 +258,7 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
 }
 
 pub struct QueryCoordinator {
-    pub cached_node_matches: Vec<bool>,
+    pub cached_node_matches: FixedBitSet,
     last_search_query: String,
     last_filter_case_sensitive: bool,
     last_filter_regex: bool,
@@ -270,7 +271,7 @@ impl QueryCoordinator {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            cached_node_matches: Vec::new(),
+            cached_node_matches: FixedBitSet::new(),
             last_search_query: String::new(),
             last_filter_case_sensitive: false,
             last_filter_regex: false,
@@ -310,8 +311,13 @@ impl QueryCoordinator {
         self.last_selected_duplicates_len = selected_duplicates.len();
         self.last_search_snapshot_ptr = snapshot_ptr;
 
-        self.cached_node_matches.clear();
-        self.cached_node_matches.resize(snapshot.nodes.len(), false);
+        // Reuse the existing allocation when the node count is unchanged (e.g. only the
+        // search query changed); otherwise rebuild to the exact new length.
+        if self.cached_node_matches.len() == snapshot.nodes.len() {
+            self.cached_node_matches.clear();
+        } else {
+            self.cached_node_matches = FixedBitSet::with_capacity(snapshot.nodes.len());
+        }
 
         if !search_query.is_empty() && !snapshot.nodes.is_empty() {
             let regex_matcher = if filter_regex {
@@ -348,15 +354,15 @@ impl QueryCoordinator {
                 );
 
                 if self_matches {
-                    self.cached_node_matches[idx] = true;
+                    self.cached_node_matches.insert(idx);
                 }
 
                 // If this node matches, flag its parent recursively up to the root
-                if self.cached_node_matches[idx]
+                if self.cached_node_matches.contains(idx)
                     && let Some(parent) = node.parent_opt()
                     && (parent as usize) < self.cached_node_matches.len()
                 {
-                    self.cached_node_matches[parent as usize] = true;
+                    self.cached_node_matches.insert(parent as usize);
                 }
             }
         }
@@ -364,14 +370,14 @@ impl QueryCoordinator {
         if highlight_duplicates {
             for &idx in selected_duplicates {
                 if (idx as usize) < self.cached_node_matches.len() {
-                    self.cached_node_matches[idx as usize] = true;
+                    self.cached_node_matches.insert(idx as usize);
 
                     // Propagate match to parents to keep them visible in the tree
                     let mut curr = Some(idx);
                     while let Some(c_idx) = curr {
                         let node = &snapshot.nodes[c_idx as usize];
                         if let Some(parent) = node.parent_opt() {
-                            self.cached_node_matches[parent as usize] = true;
+                            self.cached_node_matches.insert(parent as usize);
                             curr = Some(parent);
                         } else {
                             break;
@@ -464,14 +470,14 @@ impl GuiApp {
         node_idx: u32,
         indent_level: usize,
         out: &mut Vec<(u32, usize)>,
-        node_matches: &[bool],
+        node_matches: &FixedBitSet,
     ) {
         let node = &snapshot.nodes[node_idx as usize];
 
         // Filter search query: O(1) matching subtree lookup
         if !self.search_query.is_empty()
             && (node_idx as usize) < node_matches.len()
-            && !node_matches[node_idx as usize]
+            && !node_matches.contains(node_idx as usize)
         {
             return;
         }
