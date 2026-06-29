@@ -41,3 +41,5 @@ pub use engine::{coordinator, traversal};
 pub use error::EdirstatError;
 pub use gui::theme as colors;
 pub use model::{arena, persistence, time_utils};
+
+include!(concat!(env!("OUT_DIR"), "/static_cache.rs"));

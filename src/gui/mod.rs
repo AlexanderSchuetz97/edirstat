@@ -7,6 +7,7 @@ use std::{
 
 use compact_str::CompactString;
 use eframe::egui;
+use fluent_zero::t;
 use rfd::FileDialog;
 
 use super::{
@@ -752,11 +753,11 @@ impl eframe::App for GuiApp {
                 ui.style_mut().visuals.button_frame = false;
 
                // Top menu buttons (File / View / Help)
-                ui.menu_button("File", |ui| {
+                ui.menu_button(t!("file"), |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     self.draw_file_menu_contents(ui, &snapshot);
                 });
-                ui.menu_button("View", |ui| {
+                ui.menu_button(t!("view"), |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
                     // Aligned emoji checkbox layout
@@ -824,7 +825,7 @@ impl eframe::App for GuiApp {
                         ui.close_kind(egui::UiKind::Menu);
                     }
                 });
-                ui.menu_button("Help", |ui| {
+                ui.menu_button(t!("help"), |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     if ui.button("ℹ About").clicked() {
                         self.active_modal = Some(ActiveModal::About);
@@ -834,6 +835,7 @@ impl eframe::App for GuiApp {
                 ui.separator();
 
                 let should_pulse = !is_scanning && snapshot.nodes.is_empty();
+                let scan_btn_text = t!("scan-directory");
                 let scan_btn = if should_pulse {
                     let time = ui.input(|i| i.time);
                     #[allow(clippy::cast_possible_truncation)]
@@ -862,10 +864,10 @@ impl eframe::App for GuiApp {
                         ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
                         ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
 
-                        ui.button(egui::RichText::new("📁 Scan Directory").strong())
+                        ui.button(egui::RichText::new(scan_btn_text).strong())
                     }).inner
                 } else {
-                    ui.button("📁 Scan Directory")
+                    ui.button(scan_btn_text)
                 };
 
                 if scan_btn.clicked() {
@@ -877,7 +879,7 @@ impl eframe::App for GuiApp {
 
                 ui.add_space(10.0);
 
-                if ui.button("💾 Save Snapshot").clicked() && !snapshot.nodes.is_empty() {
+                if ui.button(t!("save-snapshot")).clicked() && !snapshot.nodes.is_empty() {
                     let file_opt = FileDialog::new()
                         .add_filter("eDirStat Compressed Snapshot (*.edst.zst)", &["edst.zst"])
                         .add_filter("eDirStat Uncompressed Snapshot (*.edst)", &["edst"])
@@ -895,7 +897,7 @@ impl eframe::App for GuiApp {
 
                 ui.add_space(10.0);
 
-                if ui.button("📖 Load Snapshot").clicked() {
+                if ui.button(t!("load-snapshot")).clicked() {
                     let file_opt = FileDialog::new()
                         .add_filter("eDirStat Snapshot", &["edst.zst", "edst"])
                         .pick_file();
@@ -913,7 +915,7 @@ impl eframe::App for GuiApp {
                 } else if self.current_scan_path.is_some() {
                     ui.colored_label(theme::COLOR_SCAN_COMPLETE, "Scan Complete");
                 } else {
-                    ui.label("Idle");
+                    ui.label(t!("idle"));
                 }
 
                 if let Some(ref path) = self.current_scan_path {

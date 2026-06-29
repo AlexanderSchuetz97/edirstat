@@ -1279,6 +1279,8 @@ dependencies = [
  "egui_extras",
  "egui_plot",
  "fixedbitset",
+ "fluent-zero",
+ "fluent-zero-build",
  "include_packed",
  "mimalloc-rspack",
  "open",
