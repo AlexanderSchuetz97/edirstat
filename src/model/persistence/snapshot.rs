@@ -123,15 +123,12 @@ const V2_NODE_SIZE: usize = 56;
 /// only to advance past it — it is intentionally discarded.
 fn decode_v2_legacy_node(chunk: &[u8]) -> FileNode {
     // Helper closures keep the field-by-field reads readable and bounds-checked.
-    let u32_at = |offset: usize| {
-        u32::from_le_bytes(chunk[offset..offset + 4].try_into().unwrap_or([0; 4]))
-    };
-    let u64_at = |offset: usize| {
-        u64::from_le_bytes(chunk[offset..offset + 8].try_into().unwrap_or([0; 8]))
-    };
-    let i64_at = |offset: usize| {
-        i64::from_le_bytes(chunk[offset..offset + 8].try_into().unwrap_or([0; 8]))
-    };
+    let u32_at =
+        |offset: usize| u32::from_le_bytes(chunk[offset..offset + 4].try_into().unwrap_or([0; 4]));
+    let u64_at =
+        |offset: usize| u64::from_le_bytes(chunk[offset..offset + 8].try_into().unwrap_or([0; 8]));
+    let i64_at =
+        |offset: usize| i64::from_le_bytes(chunk[offset..offset + 8].try_into().unwrap_or([0; 8]));
 
     let name_id = crate::arena::StringId(u32_at(0));
     let parent = u32_at(4);
@@ -226,7 +223,10 @@ pub fn save_snapshot_v3(
             (modified, created - modified)
         } else {
             let parent_node = &nodes[node.parent as usize];
-            (modified - parent_node.modified_timestamp as i64, created - modified)
+            (
+                modified - parent_node.modified_timestamp as i64,
+                created - modified,
+            )
         };
 
         let mod_eq_parent = node.parent != crate::arena::NO_INDEX && mod_delta == 0;
@@ -1068,8 +1068,30 @@ mod tests {
 
         // Nodes (DFS order): root dir, a file, and a file whose i64 times are pre-1970.
         let nodes_buf: Vec<u8> = [
-            legacy_v2_record(0, u32::MAX, 1, u32::MAX, 0, 1_000_000_000, 900_000_000, 2_000_000_000, 1, 1),
-            legacy_v2_record(1, 0, u32::MAX, u32::MAX, 500, 1_100_000_000, 950_000_000, 2_100_000_000, 0, 0),
+            legacy_v2_record(
+                0,
+                u32::MAX,
+                1,
+                u32::MAX,
+                0,
+                1_000_000_000,
+                900_000_000,
+                2_000_000_000,
+                1,
+                1,
+            ),
+            legacy_v2_record(
+                1,
+                0,
+                u32::MAX,
+                u32::MAX,
+                500,
+                1_100_000_000,
+                950_000_000,
+                2_100_000_000,
+                0,
+                0,
+            ),
             legacy_v2_record(2, 0, u32::MAX, u32::MAX, 0, -50, -100, 5_000_000_000, 0, 0),
         ]
         .concat();
