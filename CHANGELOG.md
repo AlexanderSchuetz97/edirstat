@@ -1,6 +1,30 @@
 # Changelog
 
-All notable changes to **eDirStat** will be documented in this file.
+---
+
+## [v2.0.1] - 2026-06-29
+
+### Added
+
+#### Documentation & Media
+
+- **📽️ Video Demos:** First frame thumbnail for comparison videos previewing correctly on GitHub
+
+### Changed
+
+#### Project Maintenance
+
+- **📦 Crate Metadata:** Refined the project description in `Cargo.toml` to explicitly highlight the deduplication capabilities.
+
+### Fixed
+
+#### GUI & Interactive Elements
+
+- **📊 Snapshot Status Bar:** Restored total files, directories, and byte counts in the bottom status bar when loading a saved `.edst` snapshot file.
+
+#### Build Configuration & Tooling
+
+- **🛠️ Multi-CPU Target Builder:** Fixed the target-CPU optimized builder script (`build_local_multivers.sh`) to conditionally compile static linking flags on supported targets, cleanly purge conflicting build suffixes, and enforce the default system linker to avoid compilation failures on Linux GNU targets.
 
 ---
 
