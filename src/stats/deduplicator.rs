@@ -988,7 +988,7 @@ mod tests {
             groups: vec![DuplicateGroup {
                 size: 10,
                 nodes: vec![1, 2],
-                file_ids: vec![(0,0), (0,0)],
+                file_ids: vec![(0, 0), (0, 0)],
             }],
             flat_rows: vec![],
         }));
@@ -1004,8 +1004,12 @@ mod tests {
 
         // Results should be cleared
         let results_guard = results.read();
-        assert!(results_guard.groups.is_empty());
-        assert!(results_guard.flat_rows.is_empty());
+        let groups_is_empty = results_guard.groups.is_empty();
+        let flat_rows_is_empty = results_guard.flat_rows.is_empty();
+        drop(results_guard);
+
+        assert!(groups_is_empty);
+        assert!(flat_rows_is_empty);
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);
