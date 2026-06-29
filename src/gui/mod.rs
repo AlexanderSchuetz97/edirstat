@@ -18,7 +18,7 @@ use super::{
 };
 use crate::arena::precompute_dir_counts;
 
-pub mod deduplicator_tab;
+pub mod deduplicator;
 pub mod explorer;
 pub mod extensions;
 pub mod modals;
