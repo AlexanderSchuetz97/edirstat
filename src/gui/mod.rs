@@ -641,9 +641,10 @@ impl GuiApp {
 }
 
 impl eframe::App for GuiApp {
-    #[cfg(feature = "online")]
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "online")]
         ctx.plugin_or_default::<egui_async::EguiAsyncPlugin>();
+
         egui_extras::install_image_loaders(ctx);
     }
 
