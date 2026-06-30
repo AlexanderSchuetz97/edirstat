@@ -1,5 +1,6 @@
 use compact_str::CompactString;
 use eframe::egui;
+use fluent_zero::t;
 
 use super::{GuiApp, theme};
 
@@ -15,7 +16,7 @@ impl GuiApp {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         ui.vertical(|ui| {
             ui.heading(
-                egui::RichText::new("📂 Extensions")
+                egui::RichText::new(t!("extensions-header"))
                     .strong()
                     .color(ui.visuals().strong_text_color()),
             );
@@ -39,7 +40,7 @@ impl GuiApp {
             }
 
             if self.extension_stats.is_empty() {
-                ui.label("No statistics gathered yet.");
+                ui.label(t!("extensions-empty"));
             } else {
                 // 2. Lazy Viewport Rendering: Render only the rows visible on screen
                 let row_height = 20.0;
@@ -78,8 +79,11 @@ impl GuiApp {
                                     |ui| {
                                         ui.style_mut().wrap_mode =
                                             Some(egui::TextWrapMode::Truncate);
-                                        ui.label(stat.ext.as_str())
-                                            .on_hover_text(format!("Files: {}", stat.file_count));
+                                        ui.label(stat.ext.as_str()).on_hover_text(
+                                            t!("extensions-hover-files", {
+                                                "count" => stat.file_count
+                                            }),
+                                        );
                                     },
                                 );
 

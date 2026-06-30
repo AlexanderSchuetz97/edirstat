@@ -1,6 +1,10 @@
-use std::sync::{Arc, atomic::Ordering};
+use std::{
+    borrow::Cow,
+    sync::{Arc, atomic::Ordering},
+};
 
 use eframe::egui;
+use fluent_zero::t;
 
 use super::{GuiApp, theme};
 use crate::arena::{FileArenaSnapshot, NodeStorage, precompute_dir_counts};
@@ -637,14 +641,14 @@ impl GuiApp {
         }
 
         struct ModalConfig {
-            title: &'static str,
+            title: Cow<'static, str>,
             border_color: egui::Color32,
             warning_color: egui::Color32,
             header: String,
             info_msg: String,
-            warning_msg: &'static str,
-            checkbox_label: &'static str,
-            confirm_button_text: &'static str,
+            warning_msg: Cow<'static, str>,
+            checkbox_label: Cow<'static, str>,
+            confirm_button_text: Cow<'static, str>,
             paths: Vec<String>,
             action: DeletionAction,
         }
@@ -670,14 +674,15 @@ impl GuiApp {
                         })
                         .collect();
                     Some(ModalConfig {
-                        title: "⚠ PERMANENT DELETION WARNING",
+                        title: t!("modal-delete-title"),
                         border_color: theme::DELETION_BORDER,
                         warning_color: theme::DELETION_WARNING,
-                        header: "⚠ Permanent Deletion Warning!".to_string(),
-                        info_msg: format!("Total Size: {size_str}"),
-                        warning_msg: "This is a recursive deletion. All files, folders, and subdirectories under the selected path(s) will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).",
-                        checkbox_label: "I understand that files will be permanently deleted and cannot be recovered.",
-                        confirm_button_text: "🗑 Yes, Delete Permanently",
+                        header: t!("modal-delete-header").into_owned(),
+                        info_msg: t!("modal-delete-info", { "size" => size_str.as_str() })
+                            .into_owned(),
+                        warning_msg: t!("modal-delete-warning"),
+                        checkbox_label: t!("modal-delete-checkbox"),
+                        confirm_button_text: t!("modal-delete-confirm"),
                         paths,
                         action: DeletionAction::DeleteMultiple,
                     })
@@ -703,14 +708,15 @@ impl GuiApp {
                         })
                         .collect();
                     Some(ModalConfig {
-                        title: "♻ MOVE TO TRASH",
+                        title: t!("modal-trash-title"),
                         border_color: theme::TRASH_BORDER,
                         warning_color: theme::TRASH_WARNING,
-                        header: "♻ Move to Trash".to_string(),
-                        info_msg: format!("Total Size: {size_str}"),
-                        warning_msg: "This will move the selected path(s) and all their contents to your system recycle bin/trash, where they can be recovered or permanently deleted later.",
-                        checkbox_label: "I confirm that I want to move this to the trash.",
-                        confirm_button_text: "♻ Yes, Move to Trash",
+                        header: t!("modal-trash-header").into_owned(),
+                        info_msg: t!("modal-trash-info", { "size" => size_str.as_str() })
+                            .into_owned(),
+                        warning_msg: t!("modal-trash-warning"),
+                        checkbox_label: t!("modal-trash-checkbox"),
+                        confirm_button_text: t!("modal-trash-confirm"),
                         paths,
                         action: DeletionAction::TrashMultiple,
                     })
@@ -736,14 +742,16 @@ impl GuiApp {
                         })
                         .collect();
                     Some(ModalConfig {
-                        title: "⚠ PERMANENT DEDUPLICATION WARNING",
+                        title: t!("modal-delete-duplicates-title"),
                         border_color: theme::DELETION_BORDER,
                         warning_color: theme::DELETION_WARNING,
-                        header: "⚠ Permanent Duplicate Deletion Warning!".to_string(),
-                        info_msg: format!("Total space to be reclaimed: {size_str}"),
-                        warning_msg: "All selected files will be permanently deleted and cannot be recovered (bypassing the recycle/trash bin).",
-                        checkbox_label: "I understand that files will be permanently deleted and cannot be recovered.",
-                        confirm_button_text: "🗑 Yes, Delete Selected Permanently",
+                        header: t!("modal-delete-duplicates-header").into_owned(),
+                        info_msg:
+                            t!("modal-delete-duplicates-info", { "size" => size_str.as_str() })
+                                .into_owned(),
+                        warning_msg: t!("modal-delete-duplicates-warning"),
+                        checkbox_label: t!("modal-delete-duplicates-checkbox"),
+                        confirm_button_text: t!("modal-delete-duplicates-confirm"),
                         paths,
                         action: DeletionAction::DeleteDuplicates,
                     })
@@ -769,14 +777,16 @@ impl GuiApp {
                         })
                         .collect();
                     Some(ModalConfig {
-                        title: "♻ MOVE DUPLICATES TO TRASH",
+                        title: t!("modal-trash-duplicates-title"),
                         border_color: theme::TRASH_BORDER,
                         warning_color: theme::TRASH_WARNING,
-                        header: "♻ Move Duplicates to Trash".to_string(),
-                        info_msg: format!("Total space to be reclaimed: {size_str}"),
-                        warning_msg: "All selected files will be moved to the recycle bin/trash.",
-                        checkbox_label: "I confirm that I want to move these files to the trash.",
-                        confirm_button_text: "♻ Yes, Move Selected to Trash",
+                        header: t!("modal-trash-duplicates-header").into_owned(),
+                        info_msg:
+                            t!("modal-trash-duplicates-info", { "size" => size_str.as_str() })
+                                .into_owned(),
+                        warning_msg: t!("modal-trash-duplicates-warning"),
+                        checkbox_label: t!("modal-trash-duplicates-checkbox"),
+                        confirm_button_text: t!("modal-trash-duplicates-confirm"),
                         paths,
                         action: DeletionAction::TrashDuplicates,
                     })
@@ -802,18 +812,18 @@ impl GuiApp {
                         })
                         .collect();
                     Some(ModalConfig {
-                        title: "🔗 REPLACE DUPLICATES WITH HARDLINKS",
+                        title: t!("modal-hardlink-duplicates-title"),
                         border_color: theme::BUTTON_ORANGE,
                         warning_color: theme::BUTTON_ORANGE_HOVER,
-                        header: "🔗 Replace Duplicates with Hardlinks".to_string(),
-                        info_msg: format!(
-                            "Total files to process: {}. Cumulative virtual size: {}",
-                            idxs.len(),
-                            size_str
-                        ),
-                        warning_msg: "This will delete the selected duplicate files and replace them with filesystem-level hardlinks pointing to the remaining original file in each group. This retains files visually while freeing up actual physical storage.",
-                        checkbox_label: "I confirm that I want to replace selected files with hardlinks.",
-                        confirm_button_text: "🔗 Yes, Replace with Hardlinks",
+                        header: t!("modal-hardlink-duplicates-header").into_owned(),
+                        info_msg: t!("modal-hardlink-duplicates-info", {
+                            "count" => idxs.len(),
+                            "size" => size_str.as_str()
+                        })
+                        .into_owned(),
+                        warning_msg: t!("modal-hardlink-duplicates-warning"),
+                        checkbox_label: t!("modal-hardlink-duplicates-checkbox"),
+                        confirm_button_text: t!("modal-hardlink-duplicates-confirm"),
                         paths,
                         action: DeletionAction::HardlinkDuplicates,
                     })
@@ -839,18 +849,18 @@ impl GuiApp {
                         })
                         .collect();
                     Some(ModalConfig {
-                        title: "🔗 REPLACE DUPLICATES WITH SOFTLINKS",
+                        title: t!("modal-softlink-duplicates-title"),
                         border_color: theme::BUTTON_ORANGE,
                         warning_color: theme::BUTTON_ORANGE_HOVER,
-                        header: "🔗 Replace Duplicates with Softlinks".to_string(),
-                        info_msg: format!(
-                            "Total files to process: {}. Cumulative virtual size: {}",
-                            idxs.len(),
-                            size_str
-                        ),
-                        warning_msg: "This will delete the selected duplicate files and replace them with filesystem-level softlinks (symbolic links) pointing to the remaining original file in each group. This retains files visually while freeing up actual physical storage.",
-                        checkbox_label: "I confirm that I want to replace selected files with softlinks.",
-                        confirm_button_text: "🔗 Yes, Replace with Softlinks",
+                        header: t!("modal-softlink-duplicates-header").into_owned(),
+                        info_msg: t!("modal-softlink-duplicates-info", {
+                            "count" => idxs.len(),
+                            "size" => size_str.as_str()
+                        })
+                        .into_owned(),
+                        warning_msg: t!("modal-softlink-duplicates-warning"),
+                        checkbox_label: t!("modal-softlink-duplicates-checkbox"),
+                        confirm_button_text: t!("modal-softlink-duplicates-confirm"),
                         paths,
                         action: DeletionAction::SoftlinkDuplicates,
                     })
@@ -871,7 +881,10 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104))) // Bright, crisp slate border
+                        .stroke(egui::Stroke::new(
+                            1.2f32,
+                            egui::Color32::from_rgb(74, 85, 104),
+                        )) // Bright, crisp slate border
                         .inner_margin(egui::Margin::ZERO) // Fill header completely to the borders
                         .corner_radius(8.0),
                 )
@@ -886,18 +899,28 @@ impl GuiApp {
                                         .color(ui.visuals().strong_text_color())
                                         .strong(),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_btn = ui.button("❌");
-                                    if close_btn.clicked() {
-                                        self.active_modal = None;
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let close_btn = ui.button("❌");
+                                        if close_btn.clicked() {
+                                            self.active_modal = None;
+                                        }
+                                    },
+                                );
                             });
                         });
 
                     // Thin, subtle separator line matching normal panels
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().hline(
+                        rect.left()..=rect.right(),
+                        rect.center().y,
+                        egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE),
+                    );
 
                     // Modal Content Frame
                     egui::Frame::new()
@@ -907,16 +930,20 @@ impl GuiApp {
                                 let path_exists = if cfg.paths.len() == 1 {
                                     let raw_path = match self.active_modal {
                                         Some(ActiveModal::Delete | ActiveModal::Trash) => {
-                                            self.delete_node_indices.first().map_or_else(|| cfg.paths[0].clone(), |&idx| snapshot.get_full_path(idx))
+                                            self.delete_node_indices.first().map_or_else(
+                                                || cfg.paths[0].clone(),
+                                                |&idx| snapshot.get_full_path(idx),
+                                            )
                                         }
                                         Some(
                                             ActiveModal::DeleteDuplicates
                                             | ActiveModal::TrashDuplicates
                                             | ActiveModal::HardlinkDuplicates
                                             | ActiveModal::SoftlinkDuplicates,
-                                        ) => {
-                                            self.delete_duplicates_indices.first().map_or_else(|| cfg.paths[0].clone(), |&idx| snapshot.get_full_path(idx))
-                                        }
+                                        ) => self.delete_duplicates_indices.first().map_or_else(
+                                            || cfg.paths[0].clone(),
+                                            |&idx| snapshot.get_full_path(idx),
+                                        ),
                                         _ => cfg.paths[0].clone(),
                                     };
                                     std::path::Path::new(&raw_path).exists()
@@ -940,12 +967,19 @@ impl GuiApp {
                                     let path_bg = theme::BG_PANEL_SLATE;
                                     egui::Frame::new()
                                         .fill(path_bg)
-                                        .stroke(egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE))
+                                        .stroke(egui::Stroke::new(
+                                            1.0f32,
+                                            theme::STROKE_BORDER_SLATE,
+                                        ))
                                         .inner_margin(egui::Margin::same(12))
                                         .corner_radius(4.0)
                                         .show(ui, |ui| {
-                                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                            ui.colored_label(ui.visuals().strong_text_color(), &cfg.paths[0]);
+                                            ui.style_mut().wrap_mode =
+                                                Some(egui::TextWrapMode::Wrap);
+                                            ui.colored_label(
+                                                ui.visuals().strong_text_color(),
+                                                &cfg.paths[0],
+                                            );
                                             if cfg.paths.len() > 1 {
                                                 ui.add_space(4.0);
                                                 egui::ScrollArea::vertical()
@@ -979,7 +1013,10 @@ impl GuiApp {
                                     ui.add_space(12.0);
 
                                     // Checkbox alignment
-                                    ui.checkbox(&mut self.delete_confirm_checked, cfg.checkbox_label);
+                                    ui.checkbox(
+                                        &mut self.delete_confirm_checked,
+                                        cfg.checkbox_label,
+                                    );
                                     ui.add_space(16.0);
 
                                     // Action Buttons
@@ -995,8 +1032,8 @@ impl GuiApp {
                                         )
                                         .fill(cfg.border_color);
 
-                                        let confirm_res =
-                                            ui.add_enabled(self.delete_confirm_checked, confirm_btn);
+                                        let confirm_res = ui
+                                            .add_enabled(self.delete_confirm_checked, confirm_btn);
                                         if confirm_res.clicked() {
                                             match cfg.action {
                                                 DeletionAction::DeleteMultiple => {
@@ -1051,17 +1088,18 @@ impl GuiApp {
                                     });
                                 } else {
                                     ui.heading(
-                                        egui::RichText::new("❌ Path Does Not Exist!")
+                                        egui::RichText::new(t!("modal-path-not-exist-title"))
                                             .color(theme::DELETION_WARNING)
                                             .strong(),
                                     );
                                     ui.separator();
-                                    ui.label(
-                                        "Error: The path you are trying to delete does not exist on disk.",
+                                    ui.label(t!("modal-path-not-exist-msg"));
+                                    ui.colored_label(
+                                        ui.visuals().strong_text_color(),
+                                        &cfg.paths[0],
                                     );
-                                    ui.colored_label(ui.visuals().strong_text_color(), &cfg.paths[0]);
                                     ui.add_space(16.0);
-                                    if ui.button("Close").clicked() {
+                                    if ui.button(t!("modal-close-btn")).clicked() {
                                         self.active_modal = None;
                                     }
                                 }
@@ -1076,7 +1114,7 @@ impl GuiApp {
         // Render the Admin Access Recommendation Modal
         if self.active_modal == Some(ActiveModal::AdminWarning) {
             let mut open = true;
-            egui::Window::new("⚠ Elevation Recommended")
+            egui::Window::new(t!("modal-elevation-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(false)
@@ -1085,7 +1123,10 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104)))
+                        .stroke(egui::Stroke::new(
+                            1.2f32,
+                            egui::Color32::from_rgb(74, 85, 104),
+                        ))
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1096,22 +1137,32 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.heading(
-                                    egui::RichText::new("⚠ Elevation Recommended")
+                                    egui::RichText::new(t!("modal-elevation-title"))
                                         .color(ui.visuals().strong_text_color())
                                         .strong(),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_btn = ui.button("❌");
-                                    if close_btn.clicked() {
-                                        self.active_modal = None;
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let close_btn = ui.button("❌");
+                                        if close_btn.clicked() {
+                                            self.active_modal = None;
+                                        }
+                                    },
+                                );
                             });
                         });
 
                     // Separator line
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().hline(
+                        rect.left()..=rect.right(),
+                        rect.center().y,
+                        egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE),
+                    );
 
                     // Content Area
                     egui::Frame::new()
@@ -1119,7 +1170,7 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
                                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                ui.label("eDirStat runs with standard user privileges by default. However, Windows strictly restricts raw physical disk handle access to administrator accounts.");
+                                ui.label(t!("modal-elevation-desc"));
                                 ui.add_space(10.0);
 
                                 // Warning highlight box
@@ -1133,24 +1184,24 @@ impl GuiApp {
                                         ui.horizontal(|ui| {
                                             ui.colored_label(theme::WARNING_RED, "⚡");
                                             ui.vertical(|ui| {
-                                                ui.strong("Windows NTFS MFT Driver Disabled");
-                                                ui.small("Without administrative privileges, the direct-to-disk MFT scanner cannot initialize. File analysis will use the fallback standard traversal driver, reducing scan performance by as much as 20x.");
+                                                ui.strong(t!("modal-elevation-mft-disabled"));
+                                                ui.small(t!("modal-elevation-mft-desc"));
                                             });
                                         });
                                     });
 
                                 ui.add_space(12.0);
-                                ui.label("Would you like to relaunch the application with Administrator privileges now?");
+                                ui.label(t!("modal-elevation-relaunch-prompt"));
                                 ui.add_space(16.0);
 
                                 // Modal actions footer
                                 ui.horizontal(|ui| {
-                                    if ui.button("Continue as Standard User").clicked() {
+                                    if ui.button(t!("modal-elevation-continue-std")).clicked() {
                                         self.active_modal = None;
                                     }
 
                                     let relaunch_btn = egui::Button::new(
-                                        egui::RichText::new("🛡 Relaunch as Admin")
+                                        egui::RichText::new(t!("modal-elevation-relaunch-btn"))
                                             .color(theme::COLOR_WHITE)
                                             .strong(),
                                     )
@@ -1174,7 +1225,7 @@ impl GuiApp {
         // Render Help -> About Modal Popup
         if self.active_modal == Some(ActiveModal::About) {
             let mut open = true;
-            egui::Window::new("ℹ About eDirStat")
+            egui::Window::new(t!("modal-about-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(false)
@@ -1183,7 +1234,10 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104))) // Matching bright slate border
+                        .stroke(egui::Stroke::new(
+                            1.2f32,
+                            egui::Color32::from_rgb(74, 85, 104),
+                        )) // Matching bright slate border
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1194,22 +1248,32 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.heading(
-                                    egui::RichText::new("ℹ About eDirStat")
+                                    egui::RichText::new(t!("modal-about-title"))
                                         .color(ui.visuals().strong_text_color())
                                         .strong(),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_btn = ui.button("❌");
-                                    if close_btn.clicked() {
-                                        self.active_modal = None;
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let close_btn = ui.button("❌");
+                                        if close_btn.clicked() {
+                                            self.active_modal = None;
+                                        }
+                                    },
+                                );
                             });
                         });
 
                     // Thin, subtle separator line
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().hline(
+                        rect.left()..=rect.right(),
+                        rect.center().y,
+                        egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE),
+                    );
 
                     // Content Area
                     egui::Frame::new()
@@ -1217,12 +1281,20 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.vertical_centered(|ui| {
                                 ui.add(
-                                    egui::Image::new(egui::include_image!("../../assets/img/logo-nosubtext-transparent.svg"))
-                                        .max_height(100.0)
+                                    egui::Image::new(egui::include_image!(
+                                        "../../assets/img/logo-nosubtext-transparent.svg"
+                                    ))
+                                    .max_height(100.0),
                                 );
                                 ui.add_space(8.0);
 
-                                ui.label(egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).strong().color(ui.visuals().strong_text_color()));
+                                ui.label(
+                                    egui::RichText::new(t!("modal-about-version", {
+                                        "version" => env!("CARGO_PKG_VERSION")
+                                    }))
+                                    .strong()
+                                    .color(ui.visuals().strong_text_color()),
+                                );
                                 #[cfg(feature = "online")]
                                 {
                                     ui.add_space(4.0);
@@ -1232,7 +1304,7 @@ impl GuiApp {
                                 ui.separator();
                                 ui.add_space(8.0);
 
-                                ui.label(egui::RichText::new("By: Cody Wyatt Neiman (xangelix) <neiman@cody.to>"));
+                                ui.label(egui::RichText::new(t!("modal-about-author")));
                                 ui.add_space(12.0);
 
                                 let info_bg = theme::BG_PANEL_SLATE;
@@ -1243,16 +1315,16 @@ impl GuiApp {
                                     .corner_radius(4.0)
                                     .show(ui, |ui| {
                                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                                        ui.label("A high-performance disk space analyzer and deduplication toolkit built in Rust.");
+                                        ui.label(t!("modal-about-desc1"));
                                         ui.add_space(6.0);
-                                        ui.label("Features parallel, work-stealing directory traversal, compressed snapshots with zero-parsing layout deserialization, and responsive, interactive treemaps.");
+                                        ui.label(t!("modal-about-desc2"));
                                         ui.add_space(6.0);
-                                        ui.label("The integrated deduplicator runs a multi-stage cryptographic hashing pipeline to safely isolate duplicate groups, calculate reclaimable space, and respect system-level hardlinks.");
+                                        ui.label(t!("modal-about-desc3"));
                                     });
 
                                 ui.add_space(16.0);
 
-                                if ui.button("View Open Source Licenses").clicked() {
+                                if ui.button(t!("modal-about-licenses-btn")).clicked() {
                                     self.show_licenses = true;
                                 }
                             });
@@ -1275,7 +1347,10 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104)))
+                        .stroke(egui::Stroke::new(
+                            1.2f32,
+                            egui::Color32::from_rgb(74, 85, 104),
+                        ))
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1286,22 +1361,32 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.heading(
-                                    egui::RichText::new("ℹ How Deduplication Works")
+                                    egui::RichText::new(t!("modal-how-dedup-title"))
                                         .color(ui.visuals().strong_text_color())
                                         .strong(),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_btn = ui.button("❌");
-                                    if close_btn.clicked() {
-                                        self.active_modal = None;
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let close_btn = ui.button("❌");
+                                        if close_btn.clicked() {
+                                            self.active_modal = None;
+                                        }
+                                    },
+                                );
                             });
                         });
 
                     // Thin, subtle separator line
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().hline(
+                        rect.left()..=rect.right(),
+                        rect.center().y,
+                        egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE),
+                    );
 
                     // Content Area
                     egui::Frame::new()
@@ -1311,7 +1396,9 @@ impl GuiApp {
                                 egui::ScrollArea::vertical()
                                     .max_height(450.0)
                                     .auto_shrink([false, true]) // Lock scrollbar against the right edge
-                                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::AlwaysVisible,
+                                    )
                                     .content_margin(egui::Margin {
                                         left: 0,
                                         right: 14, // Clean separation padding before the scrollbar
@@ -1320,36 +1407,60 @@ impl GuiApp {
                                     })
                                     .show(ui, |ui| {
                                         ui.vertical(|ui| {
-                                            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                            ui.style_mut().wrap_mode =
+                                                Some(egui::TextWrapMode::Wrap);
 
-                                            ui.label(
-                                                "Rather than comparing every file's bytes directly (which requires slow, pairwise O(N²) scans), this system utilizes a highly optimized 7-stage pipeline to identify identical content safely and efficiently."
-                                            );
+                                            ui.label(t!("modal-how-dedup-desc1"));
                                             ui.add_space(10.0);
 
-                                            ui.strong("The 7-Stage Pipeline:");
+                                            ui.strong(t!("modal-how-dedup-pipeline-title"));
                                             ui.add_space(6.0);
 
                                             let steps = [
-                                                ("1. Size Partitioning", "Files are grouped by their exact size in bytes. Any file with a unique size is discarded immediately, bypassing disk I/O entirely."),
-                                                ("2. Prefix Hashing", "The first 4KB of remaining candidates are hashed. This quickly filters out files with different headers or metadata formats."),
-                                                ("3. Midpoint Hashing", "A 4KB block from the center of the remaining files is hashed, catching internal structural differences."),
-                                                ("4. Suffix Hashing", "The last 4KB of data is hashed. This is highly effective at identifying differences in trailing contents or metadata."),
-                                                ("5. Multi-Range Hashing", "Large files (over 100MB) undergo periodic block sampling across their entire length to verify content consistency without reading the entire file."),
-                                                ("6. Full BLAKE3 Hashing", "For remaining candidates, a full BLAKE3 cryptographic hash is computed. Due to the high collision resistance of a 256-bit space, matching hashes indicate an astronomical unlikeliness that the files differ, providing a highly reliable proof of identity without requiring pairwise comparisons."),
-                                                ("7. Timestamp Validation", "Right before displaying or executing any deduplication action, the application verifies the files' timestamps on disk to protect against changes that occurred since snapshot generation.")
+                                                (
+                                                    t!("modal-how-dedup-step1-title"),
+                                                    t!("modal-how-dedup-step1-desc"),
+                                                ),
+                                                (
+                                                    t!("modal-how-dedup-step2-title"),
+                                                    t!("modal-how-dedup-step2-desc"),
+                                                ),
+                                                (
+                                                    t!("modal-how-dedup-step3-title"),
+                                                    t!("modal-how-dedup-step3-desc"),
+                                                ),
+                                                (
+                                                    t!("modal-how-dedup-step4-title"),
+                                                    t!("modal-how-dedup-step4-desc"),
+                                                ),
+                                                (
+                                                    t!("modal-how-dedup-step5-title"),
+                                                    t!("modal-how-dedup-step5-desc"),
+                                                ),
+                                                (
+                                                    t!("modal-how-dedup-step6-title"),
+                                                    t!("modal-how-dedup-step6-desc"),
+                                                ),
+                                                (
+                                                    t!("modal-how-dedup-step7-title"),
+                                                    t!("modal-how-dedup-step7-desc"),
+                                                ),
                                             ];
 
                                             for (title, desc) in steps {
                                                 egui::Frame::new()
                                                     .fill(theme::BG_PANEL_SLATE)
-                                                    .stroke(egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE))
+                                                    .stroke(egui::Stroke::new(
+                                                        1.0f32,
+                                                        theme::STROKE_BORDER_SLATE,
+                                                    ))
                                                     .inner_margin(egui::Margin::same(10))
                                                     .corner_radius(4.0)
                                                     .show(ui, |ui| {
                                                         // Stretch step frame to align perfectly with content bounds
                                                         ui.set_min_width(ui.available_width());
-                                                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                                                        ui.style_mut().wrap_mode =
+                                                            Some(egui::TextWrapMode::Wrap);
                                                         ui.strong(title);
                                                         ui.add_space(2.0);
                                                         ui.small(desc);
@@ -1358,11 +1469,9 @@ impl GuiApp {
                                             }
 
                                             ui.add_space(10.0);
-                                            ui.strong("Why is this sufficient?");
+                                            ui.strong(t!("modal-how-dedup-why-title"));
                                             ui.add_space(4.0);
-                                            ui.label(
-                                                "This multi-stage filter ensures that only files with identical size, prefix, midpoint, suffix, and distributed block samples are read in full. Finally, comparing a 256-bit BLAKE3 cryptographic hash offers a safety profile on par with industry-grade secure transfer protocols, eliminating the need for slow, pairwise byte-by-byte comparisons."
-                                            );
+                                            ui.label(t!("modal-how-dedup-why-desc1"));
                                         });
                                     });
 
@@ -1382,7 +1491,7 @@ impl GuiApp {
 
         if self.show_licenses {
             let mut open = true;
-            egui::Window::new("📜 Open Source Licenses")
+            egui::Window::new(t!("modal-licenses-title"))
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                 .collapsible(false)
                 .resizable(true)
@@ -1393,7 +1502,10 @@ impl GuiApp {
                 .frame(
                     egui::Frame::window(&ctx.global_style())
                         .fill(theme::BG_WINDOW_SLATE)
-                        .stroke(egui::Stroke::new(1.2f32, egui::Color32::from_rgb(74, 85, 104)))
+                        .stroke(egui::Stroke::new(
+                            1.2f32,
+                            egui::Color32::from_rgb(74, 85, 104),
+                        ))
                         .inner_margin(egui::Margin::ZERO)
                         .corner_radius(8.0),
                 )
@@ -1404,40 +1516,59 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.heading(
-                                    egui::RichText::new("📜 Open Source Licenses")
+                                    egui::RichText::new(t!("modal-licenses-title"))
                                         .color(ui.visuals().strong_text_color())
                                         .strong(),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    let close_btn = ui.button("❌");
-                                    if close_btn.clicked() {
-                                        self.show_licenses = false;
-                                    }
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let close_btn = ui.button("❌");
+                                        if close_btn.clicked() {
+                                            self.show_licenses = false;
+                                        }
+                                    },
+                                );
                             });
                         });
 
                     // Thin, subtle separator line matching normal panels
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline(rect.left()..=rect.right(), rect.center().y, egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE));
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 1.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().hline(
+                        rect.left()..=rect.right(),
+                        rect.center().y,
+                        egui::Stroke::new(1.0f32, theme::STROKE_BORDER_SLATE),
+                    );
 
                     // Modal Content Frame
                     egui::Frame::new()
                         .inner_margin(egui::Margin::same(16))
                         .show(ui, |ui| {
                             ui.vertical(|ui| {
-                                ui.label("The following third-party libraries and crates are used in this application:");
+                                ui.label(t!("modal-licenses-desc"));
                                 ui.add_space(8.0);
 
                                 let mut licenses_text = {
                                     #[cfg(target_os = "linux")]
-                                    let bytes = include_packed::include_packed!("assets/licenses/linux.md");
+                                    let bytes =
+                                        include_packed::include_packed!("assets/licenses/linux.md");
                                     #[cfg(target_os = "windows")]
-                                    let bytes = include_packed::include_packed!("assets/licenses/windows.md");
+                                    let bytes = include_packed::include_packed!(
+                                        "assets/licenses/windows.md"
+                                    );
                                     #[cfg(target_os = "macos")]
-                                    let bytes = include_packed::include_packed!("assets/licenses/macos.md");
-                                    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-                                    let bytes = include_packed::include_packed!("assets/licenses/linux.md");
+                                    let bytes =
+                                        include_packed::include_packed!("assets/licenses/macos.md");
+                                    #[cfg(not(any(
+                                        target_os = "linux",
+                                        target_os = "windows",
+                                        target_os = "macos"
+                                    )))]
+                                    let bytes =
+                                        include_packed::include_packed!("assets/licenses/linux.md");
 
                                     String::from_utf8(bytes).unwrap_or_default()
                                 };
@@ -1450,13 +1581,13 @@ impl GuiApp {
                                                 .font(egui::TextStyle::Monospace)
                                                 .desired_width(f32::INFINITY)
                                                 .desired_rows(18)
-                                                .interactive(true)
+                                                .interactive(true),
                                         );
                                     });
 
                                 ui.add_space(16.0);
                                 ui.horizontal(|ui| {
-                                    if ui.button("Close").clicked() {
+                                    if ui.button(t!("modal-close-btn")).clicked() {
                                         self.show_licenses = false;
                                     }
                                 });
@@ -1875,14 +2006,18 @@ mod tests {
 
         let mut row_names = Vec::new();
         provider.for_selected_rows(&state, &mut |row| {
-            row_names.push(row[0].0.to_string());
+            if let Some(cell) = row.cell(0) {
+                row_names.push(cell.0.to_string());
+            }
             Ok(())
         })?;
         assert_eq!(row_names, vec!["C:\\TestFolder"]);
 
         let mut all_row_names = Vec::new();
         provider.for_all_rows(&mut |row| {
-            all_row_names.push(row[0].0.to_string());
+            if let Some(cell) = row.cell(0) {
+                all_row_names.push(cell.0.to_string());
+            }
             Ok(())
         })?;
         assert_eq!(all_row_names, vec!["C:\\TestFolder"]);

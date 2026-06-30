@@ -8,6 +8,7 @@ use egui_table_kit::{
     error::TableError,
     operations::{OperationContext, TableOperation, TableOperationEnablement},
 };
+use fluent_zero::t;
 
 use crate::{arena::FileArenaSnapshot, coordinator::SharedState};
 
@@ -43,7 +44,7 @@ impl UpOneLevelOp {
 
 impl TableOperation for UpOneLevelOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Up One Level")
+        t!("op-up-one-level")
     }
 
     fn icon(&self) -> &'static str {
@@ -62,12 +63,12 @@ impl TableOperation for UpOneLevelOp {
         {
             let parent = snapshot.nodes[idx as usize].parent;
             if parent == crate::arena::NO_INDEX {
-                crate::gui::toast_warning("Already at the root level");
+                crate::gui::toast_warning(t!("toast-already-root"));
             } else {
                 ctx.data.selected_rows.clear();
                 ctx.data.selected_rows.insert(parent);
                 let _ = self.command_tx.send(AppCommand::ScrollToSelected);
-                crate::gui::toast_info("Navigated up one level");
+                crate::gui::toast_info(t!("toast-navigated-up"));
             }
         }
         Ok(())
@@ -92,7 +93,7 @@ impl RefreshRootOp {
 
 impl TableOperation for RefreshRootOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Refresh Entire Scan")
+        t!("op-refresh-entire-scan")
     }
 
     fn icon(&self) -> &'static str {
@@ -111,7 +112,7 @@ impl TableOperation for RefreshRootOp {
         if !snapshot.nodes.is_empty() {
             // The root node is always strictly at index 0 in the arena
             let _ = self.command_tx.send(AppCommand::RefreshSubtrees(vec![0]));
-            crate::gui::toast_info("Refreshing entire scan...");
+            crate::gui::toast_info(t!("toast-refreshing-scan"));
         }
 
         Ok(())
@@ -136,7 +137,7 @@ impl RefreshDirectoryOp {
 
 impl TableOperation for RefreshDirectoryOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Refresh Directory")
+        t!("op-refresh-directory")
     }
 
     fn icon(&self) -> &'static str {
@@ -161,7 +162,7 @@ impl TableOperation for RefreshDirectoryOp {
 
         if !dirs.is_empty() {
             let _ = self.command_tx.send(AppCommand::RefreshSubtrees(dirs));
-            crate::gui::toast_info("Refreshing selected directory/directories...");
+            crate::gui::toast_info(t!("toast-refreshing-dir"));
         }
         Ok(())
     }
@@ -181,7 +182,7 @@ impl OpenFileManagerOp {
 
 impl TableOperation for OpenFileManagerOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Open in File Manager")
+        t!("op-open-file-manager")
     }
 
     fn icon(&self) -> &'static str {
@@ -207,9 +208,16 @@ impl TableOperation for OpenFileManagerOp {
                 Ok(()) => {
                     let path_lossy = dir_to_open.to_string_lossy();
                     let cleaned_path = crate::model::arena::clean_unc_path(&path_lossy);
-                    crate::gui::toast_info(format!("Opened in file manager: {cleaned_path}"));
+                    crate::gui::toast_info(
+                        t!("toast-opened-manager", { "path" => cleaned_path.as_ref() }),
+                    );
                 }
-                Err(e) => crate::gui::toast_error(format!("Failed to open in file manager: {e}")),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    crate::gui::toast_error(
+                        t!("toast-failed-open-manager", { "error" => err_msg.as_str() }),
+                    );
+                }
             }
         }
         Ok(())
@@ -230,7 +238,7 @@ impl OpenTerminalOp {
 
 impl TableOperation for OpenTerminalOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Open Terminal Here")
+        t!("op-open-terminal")
     }
 
     fn icon(&self) -> &'static str {
@@ -250,8 +258,15 @@ impl TableOperation for OpenTerminalOp {
         {
             let path_str = snapshot.get_full_path(idx);
             match super::open_terminal_at(Path::new(&path_str)) {
-                Ok(()) => crate::gui::toast_info(format!("Opened terminal at: {path_str}")),
-                Err(e) => crate::gui::toast_error(format!("Failed to open terminal: {e}")),
+                Ok(()) => crate::gui::toast_info(
+                    t!("toast-opened-terminal", { "path" => path_str.as_str() }),
+                ),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    crate::gui::toast_error(
+                        t!("toast-failed-open-terminal", { "error" => err_msg.as_str() }),
+                    );
+                }
             }
         }
         Ok(())
@@ -272,7 +287,7 @@ impl CopyPathOp {
 
 impl TableOperation for CopyPathOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Copy Path")
+        t!("op-copy-path")
     }
 
     fn icon(&self) -> &'static str {
@@ -296,7 +311,7 @@ impl TableOperation for CopyPathOp {
 
         let num_paths = paths.len();
         ctx.ui.ctx().copy_text(paths.join("\n"));
-        crate::gui::toast_success(format!("Copied {num_paths} path(s) to clipboard"));
+        crate::gui::toast_success(t!("toast-copied-paths", { "count" => num_paths }));
         Ok(())
     }
 }
@@ -315,7 +330,7 @@ impl CopyNameOp {
 
 impl TableOperation for CopyNameOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Copy Name")
+        t!("op-copy-name")
     }
 
     fn icon(&self) -> &'static str {
@@ -347,7 +362,7 @@ impl TableOperation for CopyNameOp {
 
         let num_names = names.len();
         ctx.ui.ctx().copy_text(names.join("\n"));
-        crate::gui::toast_success(format!("Copied {num_names} name(s) to clipboard"));
+        crate::gui::toast_success(t!("toast-copied-names", { "count" => num_names }));
         Ok(())
     }
 }
@@ -367,7 +382,7 @@ impl TrashSelectedOp {
 
 impl TableOperation for TrashSelectedOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Move to Trash")
+        t!("op-move-trash")
     }
 
     fn icon(&self) -> &'static str {
@@ -400,7 +415,7 @@ impl DeleteSelectedOp {
 
 impl TableOperation for DeleteSelectedOp {
     fn name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("Permanently Delete")
+        t!("op-permanently-delete")
     }
 
     fn icon(&self) -> &'static str {

@@ -5,47 +5,74 @@ use egui_table_kit::{
     error::TableError,
     filter::Filter,
     header::HeaderTrait as _,
-    operations::{RowCallback, RowHierarchy, TableProvider},
+    operations::{HeaderIter, RowCallback, RowHierarchy, TableProvider},
     state::TableState,
 };
 use fixedbitset::FixedBitSet;
+use fluent_zero::t;
 use smallvec::SmallVec;
 
 use super::{ActiveModal, GuiApp, theme};
 use crate::arena::{FileArenaSnapshot, NO_INDEX};
 
+struct TableProviderRow<'a> {
+    cleaned_name: std::borrow::Cow<'a, str>,
+}
+
+impl egui_table_kit::operations::Row for TableProviderRow<'_> {
+    fn cell(&self, col_index: usize) -> Option<egui_table_kit::operations::TableCell<'_>> {
+        if col_index == 0 {
+            Some((std::borrow::Cow::Borrowed(self.cleaned_name.as_ref()), None))
+        } else {
+            None
+        }
+    }
+
+    fn column_count(&self) -> usize {
+        1
+    }
+}
+
 pub struct TableProviderWrapper<'a> {
     snapshot: &'a FileArenaSnapshot,
-    headers: Vec<&'static str>,
     time_format: crate::model::time_utils::TimeFormat,
 }
 
 impl<'a> TableProviderWrapper<'a> {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         snapshot: &'a FileArenaSnapshot,
         time_format: crate::model::time_utils::TimeFormat,
     ) -> Self {
         Self {
             snapshot,
-            headers: vec![
-                "Name",
-                "Percentage",
-                "Size",
-                "Items",
-                "Files",
-                "Subdirs",
-                "Created",
-                "Modified",
-            ],
             time_format,
         }
     }
 }
 
 impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
-    fn headers(&self) -> &[&str] {
-        &self.headers
+    fn column_count(&self) -> usize {
+        8
+    }
+
+    fn header(&self, index: usize) -> Option<std::borrow::Cow<'_, str>> {
+        let key = match index {
+            0 => "explorer-hdr-name",
+            1 => "explorer-hdr-percentage",
+            2 => "explorer-hdr-size",
+            3 => "explorer-hdr-items",
+            4 => "explorer-hdr-files",
+            5 => "explorer-hdr-subdirs",
+            6 => "explorer-hdr-created",
+            7 => "explorer-hdr-modified",
+            _ => return None,
+        };
+        Some(t!(key))
+    }
+
+    fn headers(&self) -> HeaderIter<'_> {
+        HeaderIter::new(self)
     }
 
     fn row_count(&self) -> usize {
@@ -57,7 +84,6 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
         state: &TableState,
         f: &mut RowCallback<'_>,
     ) -> Result<(), TableError> {
-        let mut row_buf = Vec::new();
         for row_idx in &state.selected_rows {
             if (row_idx as usize) < self.snapshot.nodes.len() {
                 let node = &self.snapshot.nodes[row_idx as usize];
@@ -67,16 +93,13 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
                 } else {
                     std::borrow::Cow::Borrowed(name)
                 };
-                row_buf.clear();
-                row_buf.push((cleaned_name, None));
-                f(&row_buf)?;
+                f(&TableProviderRow { cleaned_name })?;
             }
         }
         Ok(())
     }
 
     fn for_all_rows(&self, f: &mut RowCallback<'_>) -> Result<(), TableError> {
-        let mut row_buf = Vec::new();
         for node in self.snapshot.nodes.iter() {
             let name = self.snapshot.string_pool.get(node.name_id).unwrap_or("");
             let cleaned_name = if node.parent_opt().is_none() {
@@ -84,9 +107,7 @@ impl egui_table_kit::operations::TableProvider for TableProviderWrapper<'_> {
             } else {
                 std::borrow::Cow::Borrowed(name)
             };
-            row_buf.clear();
-            row_buf.push((cleaned_name, None));
-            f(&row_buf)?;
+            f(&TableProviderRow { cleaned_name })?;
         }
         Ok(())
     }
@@ -673,7 +694,7 @@ impl GuiApp {
     pub fn render_hierarchical_table(&mut self, ui: &mut egui::Ui, snapshot: &FileArenaSnapshot) {
         if snapshot.nodes.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.label("Click 'Scan Directory' to explore disk usage.");
+                ui.label(t!("explorer-empty-state"));
             });
             return;
         }
@@ -756,7 +777,7 @@ impl GuiApp {
 
                 let (responses, table) = match builder.archived_headers(
                     &self.table_state,
-                    provider.headers().iter().copied(),
+                    provider.headers(),
                     24.0,
                     org_colors,
                     user_colors,
@@ -1240,7 +1261,7 @@ impl GuiApp {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.heading(
-                    egui::RichText::new("ℹ Details")
+                    egui::RichText::new(t!("explorer-details-header"))
                         .strong()
                         .color(ui.visuals().strong_text_color()),
                 );
@@ -1253,7 +1274,7 @@ impl GuiApp {
                             ui.button("❌")
                         })
                         .inner
-                        .on_hover_text("Deselect items");
+                        .on_hover_text(t!("explorer-deselect-hover"));
                     if deselect_btn.clicked() {
                         self.table_state.selected_rows.clear();
                         self.focus_node_idx = None;
@@ -1264,23 +1285,31 @@ impl GuiApp {
 
             ui.vertical(|ui| {
                 ui.label(
-                    egui::RichText::new(format!("{count} Selected Items"))
-                        .strong()
-                        .size(16.0),
+                    egui::RichText::new(t!("explorer-selected-items-count", {
+                        "count" => count
+                    }))
+                    .strong()
+                    .size(16.0),
                 );
                 ui.add_space(8.0);
 
-                ui.label(format!("Total Size: {total_size_str}"));
-                ui.label(format!("Files: {files}"));
-                ui.label(format!("Directories: {directories}"));
+                ui.label(t!("explorer-total-size", {
+                    "size" => total_size_str.as_str()
+                }));
+                ui.label(t!("explorer-files", {
+                    "count" => files
+                }));
+                ui.label(t!("explorer-directories", {
+                    "count" => directories
+                }));
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(8.0);
 
-                ui.strong("Actions");
+                ui.strong(t!("explorer-actions-title"));
                 ui.add_space(4.0);
 
-                ui.weak("Operations:");
+                ui.weak(t!("explorer-actions-operations"));
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     let is_scanning = self.shared_state.is_scanning.load(Ordering::SeqCst);
@@ -1288,11 +1317,11 @@ impl GuiApp {
 
                     let refresh_btn = draw_action_button(
                         ui,
-                        "🔄 Refresh Directory",
+                        &t!("explorer-action-refresh-directory"),
                         egui::Color32::from_rgb(34, 197, 94), // Green
                         is_dir_selected,
                     )
-                    .on_hover_text("Refresh all selected directory subtrees");
+                    .on_hover_text(t!("explorer-action-refresh-hover"));
                     if refresh_btn.clicked() {
                         let dirs: Vec<u32> = self
                             .table_state
@@ -1360,7 +1389,7 @@ impl GuiApp {
             // Header with Close Button
             ui.horizontal(|ui| {
                 ui.heading(
-                    egui::RichText::new("ℹ Details")
+                    egui::RichText::new(t!("explorer-details-header"))
                         .strong()
                         .color(ui.visuals().strong_text_color()),
                 );
@@ -1373,7 +1402,7 @@ impl GuiApp {
                             ui.button("❌")
                         })
                         .inner
-                        .on_hover_text("Deselect item");
+                        .on_hover_text(t!("explorer-deselect-single-hover"));
                     if deselect_btn.clicked() {
                         self.table_state.selected_rows.clear();
                         self.focus_node_idx = None;
@@ -1414,13 +1443,13 @@ impl GuiApp {
                         .striped(true)
                         .show(ui, |ui| {
                             // Type field
-                            ui.weak("Type:");
+                            ui.weak(t!("explorer-grid-type"));
                             let type_str = if is_sym {
-                                "Symbolic Link"
+                                t!("type-symlink")
                             } else if is_dir {
-                                "Directory"
+                                t!("type-directory")
                             } else {
-                                "File"
+                                t!("type-file")
                             };
                             ui.allocate_ui(
                                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
@@ -1432,7 +1461,7 @@ impl GuiApp {
                             ui.end_row();
 
                             // Size field
-                            ui.weak("Size:");
+                            ui.weak(t!("explorer-grid-size"));
                             let formatted_size = prettier_bytes::ByteFormatter::new()
                                 .format(node.size)
                                 .to_string();
@@ -1446,7 +1475,7 @@ impl GuiApp {
                             ui.end_row();
 
                             // Bytes field
-                            ui.weak("Bytes:");
+                            ui.weak(t!("explorer-grid-bytes"));
                             ui.allocate_ui(
                                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
                                 |ui| {
@@ -1457,7 +1486,7 @@ impl GuiApp {
                             ui.end_row();
 
                             // Items
-                            ui.weak("Items:");
+                            ui.weak(t!("explorer-grid-items"));
                             ui.allocate_ui(
                                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
                                 |ui| {
@@ -1472,7 +1501,7 @@ impl GuiApp {
                             ui.end_row();
 
                             // Files
-                            ui.weak("Files:");
+                            ui.weak(t!("explorer-grid-files"));
                             ui.allocate_ui(
                                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
                                 |ui| {
@@ -1487,7 +1516,7 @@ impl GuiApp {
                             ui.end_row();
 
                             // Subdirs
-                            ui.weak("Subdirs:");
+                            ui.weak(t!("explorer-grid-subdirs"));
                             ui.allocate_ui(
                                 egui::vec2(ui.available_width(), ui.spacing().interact_size.y),
                                 |ui| {
@@ -1522,7 +1551,7 @@ impl GuiApp {
                                 }
 
                                 if let Some((_, user, group, perm)) = &self.unix_metadata_cache {
-                                    ui.weak("User:");
+                                    ui.weak(t!("explorer-grid-user"));
                                     ui.allocate_ui(
                                         egui::vec2(
                                             ui.available_width(),
@@ -1535,7 +1564,7 @@ impl GuiApp {
                                     );
                                     ui.end_row();
 
-                                    ui.weak("Group:");
+                                    ui.weak(t!("explorer-grid-group"));
                                     ui.allocate_ui(
                                         egui::vec2(
                                             ui.available_width(),
@@ -1548,7 +1577,7 @@ impl GuiApp {
                                     );
                                     ui.end_row();
 
-                                    ui.weak("Permissions:");
+                                    ui.weak(t!("explorer-grid-permissions"));
                                     ui.allocate_ui(
                                         egui::vec2(
                                             ui.available_width(),
@@ -1569,11 +1598,11 @@ impl GuiApp {
                     ui.add_space(8.0);
 
                     // Actions
-                    ui.strong("Actions");
+                    ui.strong(t!("explorer-actions-title"));
                     ui.add_space(4.0);
 
                     // Full Path display and copy
-                    ui.weak("Full Path:");
+                    ui.weak(t!("explorer-grid-path"));
                     let full_path = snapshot.get_full_path(node_idx);
                     let cleaned_path = crate::model::arena::clean_unc_path(&full_path);
                     ui.horizontal(|ui| {
@@ -1590,7 +1619,7 @@ impl GuiApp {
                     ui.horizontal(|ui| {
                         let copy_btn = draw_action_button(
                             ui,
-                            "📋 Copy Path",
+                            &t!("explorer-action-copy-path"),
                             egui::Color32::from_rgb(139, 92, 246), // Violet/Purple
                             true,
                         );
@@ -1600,7 +1629,7 @@ impl GuiApp {
 
                         let open_btn = draw_action_button(
                             ui,
-                            "🗁 Open Manager",
+                            &t!("explorer-action-open-manager"),
                             egui::Color32::from_rgb(245, 158, 11), // Amber/Orange
                             true,
                         );
@@ -1618,7 +1647,7 @@ impl GuiApp {
                     ui.add_space(12.0);
 
                     // File operations
-                    ui.weak("Operations:");
+                    ui.weak(t!("explorer-actions-operations"));
                     ui.add_space(4.0);
                     ui.vertical(|ui| {
                         let is_dir_selected = is_dir
@@ -1628,7 +1657,7 @@ impl GuiApp {
                                 .load(std::sync::atomic::Ordering::SeqCst);
                         let refresh_btn = draw_action_button(
                             ui,
-                            "🔄 Refresh Subtree",
+                            &t!("explorer-action-refresh-subtree"),
                             egui::Color32::from_rgb(34, 197, 94), // Green
                             is_dir_selected,
                         );
@@ -1639,7 +1668,7 @@ impl GuiApp {
 
                         let trash_btn = draw_action_button(
                             ui,
-                            "♻ Move to Trash",
+                            &t!("explorer-action-move-trash"),
                             egui::Color32::from_rgb(234, 179, 8), // Yellow/Orange
                             true,
                         );
@@ -1652,7 +1681,7 @@ impl GuiApp {
 
                         let delete_btn = draw_action_button(
                             ui,
-                            "🗑 Delete Permanently",
+                            &t!("explorer-action-delete-permanently"),
                             egui::Color32::from_rgb(239, 68, 68), // Red
                             true,
                         );

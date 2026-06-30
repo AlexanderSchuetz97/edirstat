@@ -4,6 +4,7 @@ use std::{sync::Arc, sync::atomic::Ordering};
 
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
+use fluent_zero::t;
 
 use crate::{arena::FileArenaSnapshot, stats::deduplicator::run_deduplication};
 
@@ -22,10 +23,10 @@ impl super::GuiApp {
         }
 
         ui.horizontal(|ui| {
-            ui.label("Find and safely remove byte-for-byte identical files using cryptographically secure BLAKE3 hashes.");
+            ui.label(t!("dedup-desc"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(5.0);
-                if ui.button("ℹ How it Works").clicked() {
+                if ui.button(t!("dedup-how-it-works")).clicked() {
                     self.active_modal = Some(crate::gui::ActiveModal::HowItWorks);
                 }
             });
@@ -97,7 +98,7 @@ impl super::GuiApp {
             });
         } else {
             ui.horizontal_wrapped(|ui| {
-                ui.label("Min File Size:");
+                ui.label(t!("dedup-min-size"));
                 let mut min_kb = self.deduplicator_config.min_size / 1024;
                 if ui
                     .add(
@@ -113,17 +114,16 @@ impl super::GuiApp {
                 ui.separator();
                 ui.checkbox(
                     &mut self.deduplicator_config.ignore_system,
-                    "Ignore System Files",
+                    t!("dedup-ignore-system"),
                 );
                 ui.checkbox(
                     &mut self.deduplicator_config.ignore_hidden,
-                    "Ignore Hidden Files",
+                    t!("dedup-ignore-hidden"),
                 );
 
                 ui.separator();
                 let can_scan = !snapshot.nodes.is_empty();
-                let scan_btn =
-                    ui.add_enabled(can_scan, egui::Button::new("⚡ Start Deduplication Scan"));
+                let scan_btn = ui.add_enabled(can_scan, egui::Button::new(t!("dedup-start-scan")));
 
                 if scan_btn.clicked() {
                     self.selected_duplicates.clear();
@@ -161,7 +161,7 @@ impl super::GuiApp {
                 }
 
                 if !can_scan {
-                    ui.small("Please scan a directory first.");
+                    ui.small(t!("dedup-scan-first"));
                 }
             });
 
@@ -188,7 +188,7 @@ impl super::GuiApp {
 
         if is_cancelled {
             ui.centered_and_justified(|ui| {
-                ui.label("Scan was cancelled. Start a new scan to find duplicates.");
+                ui.label(t!("dedup-cancelled-msg"));
             });
             return;
         }
@@ -201,9 +201,9 @@ impl super::GuiApp {
             if results_guard.groups.is_empty() && results_guard.flat_rows.is_empty() {
                 ui.centered_and_justified(|ui| {
                     if is_running {
-                        ui.label("Analyzing files...");
+                        ui.label(t!("dedup-analyzing"));
                     } else {
-                        ui.label("No duplicate groups found. Try reducing the Minimum File Size or scanning a different folder.");
+                        ui.label(t!("dedup-no-duplicates"));
                     }
                 });
                 return;
@@ -222,7 +222,7 @@ impl super::GuiApp {
                     ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
                     ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
 
-                    let select_label = egui::RichText::new("🎯 Select items...")
+                    let select_label = egui::RichText::new(t!("dedup-select-items"))
                         .color(crate::colors::COLOR_WHITE)
                         .strong();
 
@@ -236,7 +236,7 @@ impl super::GuiApp {
                             ui.style_mut().visuals.widgets =
                                 ui.ctx().global_style().visuals.widgets.clone();
 
-                            if ui.button("🎯 All But Oldest").clicked() {
+                            if ui.button(t!("dedup-select-all-but-oldest")).clicked() {
                                 self.selected_duplicates.clear();
                                 for group in &results_lock.read().groups {
                                     let mut oldest_node: Option<(u32, u32)> = None;
@@ -263,7 +263,7 @@ impl super::GuiApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             }
 
-                            if ui.button("🎯 All But Newest").clicked() {
+                            if ui.button(t!("dedup-select-all-but-newest")).clicked() {
                                 self.selected_duplicates.clear();
                                 for group in &results_lock.read().groups {
                                     let mut newest_node: Option<(u32, u32)> = None;
@@ -290,7 +290,7 @@ impl super::GuiApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             }
 
-                            if ui.button("🎯 All But Shortest Path").clicked() {
+                            if ui.button(t!("dedup-select-all-but-shortest")).clicked() {
                                 self.selected_duplicates.clear();
                                 for group in &results_lock.read().groups {
                                     let mut best_node: Option<(u32, usize)> = None;
@@ -316,7 +316,7 @@ impl super::GuiApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             }
 
-                            if ui.button("🎯 All But Root-most").clicked() {
+                            if ui.button(t!("dedup-select-all-but-rootmost")).clicked() {
                                 self.selected_duplicates.clear();
                                 for group in &results_lock.read().groups {
                                     let mut best_node: Option<(u32, usize)> = None;
@@ -351,7 +351,7 @@ impl super::GuiApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             }
 
-                            if ui.button("🎯 All But Longest Path").clicked() {
+                            if ui.button(t!("dedup-select-all-but-longest")).clicked() {
                                 self.selected_duplicates.clear();
                                 for group in &results_lock.read().groups {
                                     let mut best_node: Option<(u32, usize)> = None;
@@ -380,7 +380,7 @@ impl super::GuiApp {
                             ui.separator();
 
                             ui.horizontal(|ui| {
-                                ui.label("Preferred Directory Pattern:");
+                                ui.label(t!("dedup-pref-dir-pattern"));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.deduplicator_dir_filter)
                                         .hint_text("e.g. /home/user/Archive")
@@ -388,7 +388,7 @@ impl super::GuiApp {
                                 );
                             });
 
-                            if ui.button("🎯 All But Preferred Directory").clicked() {
+                            if ui.button(t!("dedup-select-all-but-pref")).clicked() {
                                 self.selected_duplicates.clear();
                                 for group in &results_lock.read().groups {
                                     let mut preferred_idx: Option<u32> = None;
@@ -415,7 +415,7 @@ impl super::GuiApp {
 
                             ui.separator();
 
-                            if ui.button("❌ Clear Selection").clicked() {
+                            if ui.button(t!("dedup-clear-selection")).clicked() {
                                 self.selected_duplicates.clear();
                                 ui.close_kind(egui::UiKind::Menu);
                             }
@@ -447,9 +447,12 @@ impl super::GuiApp {
                         ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
 
                         let link_button_text = if has_selection {
-                            format!("🔗 Link... ({} files)", self.selected_duplicates.len())
+                            t!("dedup-link-menu", {
+                                "count" => self.selected_duplicates.len()
+                            })
+                            .into_owned()
                         } else {
-                            "🔗 Link...".to_string()
+                            t!("dedup-link-menu-disabled").into_owned()
                         };
 
                         let link_label = egui::RichText::new(link_button_text)
@@ -458,7 +461,7 @@ impl super::GuiApp {
                         ui.menu_button(link_label, |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-                            if ui.button("🔗 Replace Selected with Hardlinks").clicked() {
+                            if ui.button(t!("dedup-link-hardlinks")).clicked() {
                                 self.delete_duplicates_indices =
                                     self.selected_duplicates.iter().copied().collect();
                                 self.delete_confirm_checked = false;
@@ -467,7 +470,7 @@ impl super::GuiApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             }
 
-                            if ui.button("🔗 Replace Selected with Softlinks").clicked() {
+                            if ui.button(t!("dedup-link-softlinks")).clicked() {
                                 self.delete_duplicates_indices =
                                     self.selected_duplicates.iter().copied().collect();
                                 self.delete_confirm_checked = false;
@@ -494,13 +497,13 @@ impl super::GuiApp {
                         ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
 
                         let button_text = if has_selection {
-                            format!(
-                                "🗑 Remove... ({} files, {})",
-                                self.selected_duplicates.len(),
-                                reclaim_str
-                            )
+                            t!("dedup-remove-menu", {
+                                "count" => self.selected_duplicates.len(),
+                                "size" => reclaim_str.as_str()
+                            })
+                            .into_owned()
                         } else {
-                            "🗑 Remove...".to_string()
+                            t!("dedup-remove-menu-disabled").into_owned()
                         };
 
                         let remove_label = egui::RichText::new(button_text)
@@ -509,7 +512,7 @@ impl super::GuiApp {
                         ui.menu_button(remove_label, |ui| {
                             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-                            if ui.button("♻ Move Selected to Trash").clicked() {
+                            if ui.button(t!("dedup-remove-trash")).clicked() {
                                 self.delete_duplicates_indices =
                                     self.selected_duplicates.iter().copied().collect();
                                 self.delete_confirm_checked = false;
@@ -517,7 +520,7 @@ impl super::GuiApp {
                                 ui.close_kind(egui::UiKind::Menu);
                             }
 
-                            if ui.button("🗑 Delete Selected Permanently").clicked() {
+                            if ui.button(t!("dedup-remove-delete")).clicked() {
                                 self.delete_duplicates_indices =
                                     self.selected_duplicates.iter().copied().collect();
                                 self.delete_confirm_checked = false;
@@ -561,25 +564,25 @@ impl super::GuiApp {
                     .max_scroll_height(available_height)
                     .header(24.0, |mut header| {
                         header.col(|ui| {
-                            ui.strong("[     ]");
+                            ui.strong(t!("dedup-hdr-checkbox"));
                         });
                         header.col(|ui| {
-                            ui.strong("Filename");
+                            ui.strong(t!("dedup-hdr-filename"));
                         });
                         header.col(|ui| {
-                            ui.strong("Parent Directory");
+                            ui.strong(t!("dedup-hdr-directory"));
                         });
                         header.col(|ui| {
-                            ui.strong("Size");
+                            ui.strong(t!("dedup-hdr-size"));
                         });
                         header.col(|ui| {
-                            ui.strong("Reclaimable");
+                            ui.strong(t!("dedup-hdr-reclaimable"));
                         });
                         header.col(|ui| {
-                            ui.strong("Created");
+                            ui.strong(t!("dedup-hdr-created"));
                         });
                         header.col(|ui| {
-                            ui.strong("Modified");
+                            ui.strong(t!("dedup-hdr-modified"));
                         });
                     })
                     .body(|body| {
@@ -596,7 +599,7 @@ impl super::GuiApp {
                             // Format timestamps at render-time so we respect the user's chosen format.
                             let has_no_perm = snapshot.nodes[node_idx as usize].has_no_permission();
                             let created_str = if has_no_perm {
-                                "No Permission".to_string()
+                                t!("no-permission").into_owned()
                             } else {
                                 crate::model::time_utils::format_epoch(
                                     row_data.created_timestamp,
@@ -604,7 +607,7 @@ impl super::GuiApp {
                                 )
                             };
                             let modified_str = if has_no_perm {
-                                "No Permission".to_string()
+                                t!("no-permission").into_owned()
                             } else {
                                 crate::model::time_utils::format_epoch(
                                     row_data.modified_timestamp,
@@ -659,7 +662,7 @@ impl super::GuiApp {
                                                 .corner_radius(3.0);
                                             frame.show(ui, |ui| {
                                                 ui.label(
-                                                    egui::RichText::new("Hardlink")
+                                                    egui::RichText::new(t!("hardlink-badge"))
                                                         .size(10.0)
                                                         .strong()
                                                         .color(ui.visuals().selection.stroke.color),

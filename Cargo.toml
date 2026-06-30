@@ -52,7 +52,7 @@ crossbeam = "0.8.4"
 directories = "6.0.0"
 eframe = "0.35.0"
 egui-notify = { version = "0.22.0", git = "https://github.com/xangelix/egui-notify.git", branch = "egui-0.35" }
-egui-table-kit = "0.3.0"
+egui-table-kit = "0.4.0"
 egui_extras = { version = "0.35.0", features = ["svg_text"] }
 egui_plot = "0.36.0"
 fixedbitset = "0.5.7"

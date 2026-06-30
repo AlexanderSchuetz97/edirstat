@@ -763,8 +763,10 @@ impl eframe::App for GuiApp {
                         .color(ui.visuals().strong_text_color()),
                 );
                 ui.add(
-                    egui::Image::new(egui::include_image!("../../assets/img/icon-transparent.svg"))
-                        .max_height(24.0)
+                    egui::Image::new(egui::include_image!(
+                        "../../assets/img/icon-transparent.svg"
+                    ))
+                    .max_height(24.0),
                 );
                 ui.separator();
 
@@ -772,7 +774,7 @@ impl eframe::App for GuiApp {
                 let saved_button_frame = ui.visuals().button_frame;
                 ui.style_mut().visuals.button_frame = false;
 
-               // Top menu buttons (File / View / Help)
+                // Top menu buttons (File / View / Help)
                 ui.menu_button(t!("file"), |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                     self.draw_file_menu_contents(ui, &snapshot);
@@ -787,39 +789,51 @@ impl eframe::App for GuiApp {
                         if ui.checkbox(&mut checked, "").changed() {
                             self.monospace_paths = checked;
                         }
-                        let response = ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("🅰").size(12.0));
-                            ui.label(
-                                egui::RichText::new("Monospace Paths")
-                                    .color(ui.visuals().widgets.inactive.text_color()),
-                            );
-                        }).response;
+                        let response = ui
+                            .horizontal(|ui| {
+                                ui.label(egui::RichText::new("🅰").size(12.0));
+                                ui.label(
+                                    egui::RichText::new(t!("monospace-paths"))
+                                        .color(ui.visuals().widgets.inactive.text_color()),
+                                );
+                            })
+                            .response;
 
-                        let label_click = ui.interact(response.rect, ui.id().with("monospace_label"), egui::Sense::click());
+                        let label_click = ui.interact(
+                            response.rect,
+                            ui.id().with("monospace_label"),
+                            egui::Sense::click(),
+                        );
                         if label_click.clicked() {
                             self.monospace_paths = !self.monospace_paths;
                         }
                     });
 
-                    ui.checkbox(&mut self.highlight_duplicates, "✨ Highlight Duplicates");  
+                    ui.checkbox(&mut self.highlight_duplicates, t!("highlight-duplicates"));
 
-                    ui.menu_button("🕒 Time Format", |ui| {
+                    ui.menu_button(t!("time-format"), |ui| {
                         for format in crate::model::time_utils::CommonTimeFormat::ALL {
                             let is_selected = self.time_format.0 == format.as_str();
                             if ui.selectable_label(is_selected, format.label()).clicked() {
-                                self.time_format = crate::model::time_utils::TimeFormat(format.as_str().to_string());
+                                self.time_format = crate::model::time_utils::TimeFormat(
+                                    format.as_str().to_string(),
+                                );
                                 ui.close_kind(egui::UiKind::Menu);
                             }
                         }
                     });
 
-                    ui.menu_button("💬 Language", |ui| {
+                    ui.menu_button(t!("language"), |ui| {
                         for locale in Locale::iter() {
                             let is_selected = self.locale == locale;
                             let locale_str = locale.to_compact_string();
-                            if ui.selectable_label(is_selected, locale_str.as_str()).clicked() {
-
-                                if let Ok(lang) = fluent_zero::LanguageIdentifier::from_str(&locale_str) {
+                            if ui
+                                .selectable_label(is_selected, locale_str.as_str())
+                                .clicked()
+                            {
+                                if let Ok(lang) =
+                                    fluent_zero::LanguageIdentifier::from_str(&locale_str)
+                                {
                                     fluent_zero::set_lang(lang);
                                 }
 
@@ -830,40 +844,49 @@ impl eframe::App for GuiApp {
                     });
 
                     ui.separator();
-                    ui.label("Layout Mode:");
-                    ui.radio_value(&mut self.layout_mode, LayoutMode::Classic, "Classic Layout");
-                    ui.radio_value(&mut self.layout_mode, LayoutMode::WinDirStat, "WinDirStat Layout");
+                    ui.label(t!("layout-mode"));
+                    ui.radio_value(
+                        &mut self.layout_mode,
+                        LayoutMode::Classic,
+                        t!("classic-layout"),
+                    );
+                    ui.radio_value(
+                        &mut self.layout_mode,
+                        LayoutMode::WinDirStat,
+                        t!("windirstat-layout"),
+                    );
 
                     ui.separator();
 
                     let is_classic = self.layout_mode == LayoutMode::Classic;
                     if is_classic {
-                        let left_label = if self.left_panel_collapsed { "▶ Show Left Panel (F9)" } else { "◀ Hide Left Panel (F9)" };
+                        let left_label = t!("toggle-left-panel", {
+                            "collapsed" => self.left_panel_collapsed.to_string()
+                        });
                         if ui.button(left_label).clicked() {
                             self.left_panel_collapsed = !self.left_panel_collapsed;
                             ui.close_kind(egui::UiKind::Menu);
                         }
                     }
 
-                    let right_label = if self.right_panel_collapsed {
-                        if is_classic { "◀ Show Right Panel (F11)" } else { "▶ Show Extensions Panel (F11)" }
-                    } else {
-                        if is_classic { "▶ Hide Right Panel (F11)" } else { "◀ Hide Extensions Panel (F11)" }
-                    };
+                    let right_label = t!("toggle-right-panel", {
+                        "collapsed" => self.right_panel_collapsed.to_string(),
+                        "is_classic" => is_classic.to_string()
+                    });
                     if ui.button(right_label).clicked() {
                         self.right_panel_collapsed = !self.right_panel_collapsed;
                         ui.close_kind(egui::UiKind::Menu);
                     }
 
                     ui.separator();
-                    if ui.button("⏏ Collapse All").clicked() {
+                    if ui.button(t!("collapse-all")).clicked() {
                         self.table_state.expanded_rows.clear();
                         ui.close_kind(egui::UiKind::Menu);
                     }
                 });
                 ui.menu_button(t!("help"), |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                    if ui.button("ℹ About").clicked() {
+                    if ui.button(t!("about")).clicked() {
                         self.active_modal = Some(ActiveModal::About);
                     }
                 });
@@ -887,21 +910,30 @@ impl eframe::App for GuiApp {
 
                         // Inactive state (pulsing)
                         ui.style_mut().visuals.widgets.inactive.weak_bg_fill = fill_color;
-                        ui.style_mut().visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0f32, border_color);
-                        ui.style_mut().visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0f32, text_color);
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke =
+                            egui::Stroke::new(1.0f32, border_color);
+                        ui.style_mut().visuals.widgets.inactive.fg_stroke =
+                            egui::Stroke::new(1.0f32, text_color);
 
                         // Hovered state (bright purple highlight)
-                        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = theme::COLOR_SCANNING.linear_multiply(0.25);
-                        ui.style_mut().visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
-                        ui.style_mut().visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
+                        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =
+                            theme::COLOR_SCANNING.linear_multiply(0.25);
+                        ui.style_mut().visuals.widgets.hovered.bg_stroke =
+                            egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
+                        ui.style_mut().visuals.widgets.hovered.fg_stroke =
+                            egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
 
                         // Active state (clicked)
-                        ui.style_mut().visuals.widgets.active.weak_bg_fill = theme::COLOR_SCANNING.linear_multiply(0.35);
-                        ui.style_mut().visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
-                        ui.style_mut().visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
+                        ui.style_mut().visuals.widgets.active.weak_bg_fill =
+                            theme::COLOR_SCANNING.linear_multiply(0.35);
+                        ui.style_mut().visuals.widgets.active.bg_stroke =
+                            egui::Stroke::new(1.0f32, theme::COLOR_SCANNING);
+                        ui.style_mut().visuals.widgets.active.fg_stroke =
+                            egui::Stroke::new(1.0f32, theme::COLOR_WHITE);
 
                         ui.button(egui::RichText::new(scan_btn_text).strong())
-                    }).inner
+                    })
+                    .inner
                 } else {
                     ui.button(scan_btn_text)
                 };
@@ -921,8 +953,11 @@ impl eframe::App for GuiApp {
                         .add_filter("eDirStat Uncompressed Snapshot (*.edst)", &["edst"])
                         .save_file();
                     if let Some(path) = file_opt {
-                        let compress = path.extension().is_none_or(|ext| ext.eq_ignore_ascii_case("zst"));
-                        match save_snapshot(&snapshot.nodes, &snapshot.string_pool, &path, compress) {
+                        let compress = path
+                            .extension()
+                            .is_none_or(|ext| ext.eq_ignore_ascii_case("zst"));
+                        match save_snapshot(&snapshot.nodes, &snapshot.string_pool, &path, compress)
+                        {
                             Ok(()) => {}
                             Err(e) => {
                                 println!("Failed to save snapshot: {e}");
@@ -937,7 +972,9 @@ impl eframe::App for GuiApp {
                     let file_opt = FileDialog::new()
                         .add_filter("eDirStat Snapshot", &["edst.zst", "edst"])
                         .pick_file();
-                    if let Some(path) = file_opt && let Err(e) = self.load_snapshot_file(path) {
+                    if let Some(path) = file_opt
+                        && let Err(e) = self.load_snapshot_file(path)
+                    {
                         println!("Failed to load snapshot: {e}");
                     }
                 }
@@ -947,9 +984,9 @@ impl eframe::App for GuiApp {
                 // Live status display
                 if is_scanning {
                     ui.spinner();
-                    ui.colored_label(theme::COLOR_SCANNING, "Scanning Disk...");
+                    ui.colored_label(theme::COLOR_SCANNING, t!("scanning-disk"));
                 } else if self.current_scan_path.is_some() {
-                    ui.colored_label(theme::COLOR_SCAN_COMPLETE, "Scan Complete");
+                    ui.colored_label(theme::COLOR_SCAN_COMPLETE, t!("scan-complete"));
                 } else {
                     ui.label(t!("idle"));
                 }
@@ -958,15 +995,19 @@ impl eframe::App for GuiApp {
                     ui.separator();
                     let path_lossy = path.to_string_lossy();
                     let cleaned_path = crate::model::arena::clean_unc_path(&path_lossy);
-                    ui.label(format!("Path: {cleaned_path}"));
+                    ui.label(t!("path-label", {
+                        "path" => cleaned_path.as_ref()
+                    }));
                 }
 
                 // --- Right-Aligned Concurrency Badge ---
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let threads = self.traversal_engine.num_threads();
-                    let badge_text = format!("⚡ {threads} Worker Threads");
+                    let badge_text = t!("worker-threads", {
+                        "count" => threads
+                    });
                     ui.colored_label(theme::GLOW_INNER_CORE, badge_text)
-                        .on_hover_text("The number of parallel, work-stealing CPU cores allocated for directory traversal.");
+                        .on_hover_text(t!("worker-threads-hover"));
                 });
 
                 ui.style_mut().visuals.button_frame = saved_button_frame; // Restore default button frames
@@ -992,14 +1033,17 @@ impl eframe::App for GuiApp {
                     .bytes_scanned
                     .load(Ordering::Relaxed);
 
-                ui.label(format!("📁 Directories: {dir_count}"));
+                ui.label(t!("directories-count", {
+                    "count" => dir_count
+                }));
                 ui.separator();
-                ui.label(format!("📄 Files: {file_count}"));
+                ui.label(t!("files-count", {
+                    "count" => file_count
+                }));
                 ui.separator();
-                ui.label(format!(
-                    "💾 Total Size: {}",
-                    prettier_bytes::ByteFormatter::new().format(bytes as u64)
-                ));
+                ui.label(t!("total-size", {
+                    "size" => prettier_bytes::ByteFormatter::new().format(bytes as u64).to_string()
+                }));
 
                 if is_scanning && let Some(start) = self.scan_start_time {
                     let elapsed = start.elapsed();
@@ -1008,15 +1052,18 @@ impl eframe::App for GuiApp {
                     let speed = bytes as f64 / elapsed.as_secs_f64();
 
                     ui.separator();
-                    ui.label(format!("⏱ Time: {:.3}s", elapsed.as_secs_f64()));
+                    ui.label(t!("elapsed-time", {
+                        "time" => format!("{:.3}s", elapsed.as_secs_f64())
+                    }));
                     ui.separator();
-                    ui.label(format!(
-                        "⚡ Speed: {}/s",
-                        prettier_bytes::ByteFormatter::new().format(speed as u64)
-                    ));
+                    ui.label(t!("scan-speed", {
+                        "speed" => prettier_bytes::ByteFormatter::new().format(speed as u64).to_string()
+                    }));
                 } else if !is_scanning && let Some(duration) = self.total_scan_duration {
                     ui.separator();
-                    ui.label(format!("⏱ Time: {:.3}s", duration.as_secs_f64()));
+                    ui.label(t!("elapsed-time", {
+                        "time" => format!("{:.3}s", duration.as_secs_f64())
+                    }));
                     ui.separator();
                     #[allow(clippy::cast_precision_loss)]
                     let speed = if duration.as_secs_f64() > 0.0 {
@@ -1024,10 +1071,9 @@ impl eframe::App for GuiApp {
                     } else {
                         0.0
                     };
-                    ui.label(format!(
-                        "⚡ Speed: {}/s",
-                        prettier_bytes::ByteFormatter::new().format(speed as u64)
-                    ));
+                    ui.label(t!("scan-speed", {
+                        "speed" => prettier_bytes::ByteFormatter::new().format(speed as u64).to_string()
+                    }));
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1041,7 +1087,9 @@ impl eframe::App for GuiApp {
                             ui.strong(size_str);
                             let path_str = snapshot.get_full_path(idx);
                             let cleaned_path = crate::model::arena::clean_unc_path(&path_str);
-                            ui.label(format!("Selection: {cleaned_path}"));
+                            ui.label(t!("selection-path", {
+                                "path" => cleaned_path.as_ref()
+                            }));
                         }
                     } else if !self.table_state.selected_rows.is_empty() {
                         let total_size: u64 = self
@@ -1054,10 +1102,9 @@ impl eframe::App for GuiApp {
                             .format(total_size)
                             .to_string();
                         ui.strong(size_str);
-                        ui.label(format!(
-                            "Selection: {} items",
-                            self.table_state.selected_rows.len()
-                        ));
+                        ui.label(t!("selection-items", {
+                            "count" => self.table_state.selected_rows.len()
+                        }));
                     }
                 });
             });
