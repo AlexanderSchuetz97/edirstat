@@ -4,6 +4,11 @@
   "description": "eDirStat Static Landing Page",
   "main": "index.js",
   "scripts": {
+    "copy-assets": "node copy-assets.js",
+    "prebuild": "npm run copy-assets",
+    "prebuild:assets": "npm run copy-assets",
+    "predev": "npm run copy-assets",
+    "predev:assets": "npm run copy-assets",
     "dev:assets": "vite build --watch",
     "dev:zola": "zola serve",
     "dev": "concurrently \"npm run dev:assets\" \"npm run dev:zola\"",

@@ -35,21 +35,11 @@ jobs:
         run: |
           paru -Syu --noconfirm zola nodejs npm
 
-      - name: Install Node Dependencies & Build Assets
+      - name: Build Web Landing Page
         run: |
           cd web
           npm ci
-          npm run build:assets
-
-      - name: Copy remaining assets into build dir
-        run: |
-          mkdir -p web/static/assets
-          cp assets/img/logo-nosubtext-transparent.svg web/static/assets/
-
-      - name: Build Zola Site
-        run: |
-          cd web
-          zola build
+          npm run build
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v5
