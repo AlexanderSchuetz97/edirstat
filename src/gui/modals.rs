@@ -953,7 +953,8 @@ impl GuiApp {
 
                                 if path_exists {
                                     ui.label(if cfg.paths.len() > 1 {
-                                        t!("modal-process-multiple", { "count" => cfg.paths.len() }).into_owned()
+                                        t!("modal-process-multiple", { "count" => cfg.paths.len() })
+                                            .into_owned()
                                     } else {
                                         t!("modal-process-single").into_owned()
                                     });
@@ -1798,9 +1799,11 @@ impl GuiApp {
                 ui.horizontal(|ui| {
                     ui.colored_label(theme::BUTTON_ORANGE, "✨");
                     ui.hyperlink_to(
-                        egui::RichText::new(t!("update-available", { "version" => new_version.as_str() }))
-                            .color(theme::BUTTON_ORANGE)
-                            .strong(),
+                        egui::RichText::new(
+                            t!("update-available", { "version" => new_version.as_str() }),
+                        )
+                        .color(theme::BUTTON_ORANGE)
+                        .strong(),
                         "https://github.com/xangelix/edirstat/releases/latest",
                     );
                 });

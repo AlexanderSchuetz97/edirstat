@@ -9,9 +9,9 @@ use std::{
     time::Instant,
 };
 
+use fluent_zero::t;
 use prettier_bytes::ByteFormatter;
 use rayon::iter::{IntoParallelIterator as _, ParallelIterator as _};
-use fluent_zero::t;
 
 pub const HASH_BLOCK_SIZE: usize = 4096; // 4KB hashing block size
 pub const MULTI_RANGE_SPREAD_SIZE: u64 = 100 * 1024 * 1024; // 100MB spread size for multi-range checks
@@ -557,11 +557,9 @@ pub fn run_deduplication(
         calculate_hash_at_range(path, 0, HASH_BLOCK_SIZE, expected_mod, expected_cre)
             .map_or(HashResult::Error, HashResult::Success)
     };
-    let Some(groups) = run_hashing_phase(
-        current_groups,
-        &prefix_hash_fn,
-        &t!("dedup-phase2-prefix"),
-    ) else {
+    let Some(groups) =
+        run_hashing_phase(current_groups, &prefix_hash_fn, &t!("dedup-phase2-prefix"))
+    else {
         cancel_and_clear();
         return;
     };
@@ -612,11 +610,9 @@ pub fn run_deduplication(
         )
         .map_or(HashResult::Error, HashResult::Success)
     };
-    let Some(groups) = run_hashing_phase(
-        current_groups,
-        &suffix_hash_fn,
-        &t!("dedup-phase4-suffix"),
-    ) else {
+    let Some(groups) =
+        run_hashing_phase(current_groups, &suffix_hash_fn, &t!("dedup-phase4-suffix"))
+    else {
         cancel_and_clear();
         return;
     };
@@ -649,11 +645,8 @@ pub fn run_deduplication(
         calculate_full_hash(path, expected_mod, expected_cre)
             .map_or(HashResult::Error, HashResult::Success)
     };
-    let Some(groups) = run_hashing_phase(
-        current_groups,
-        &full_hash_fn,
-        &t!("dedup-phase6-full"),
-    ) else {
+    let Some(groups) = run_hashing_phase(current_groups, &full_hash_fn, &t!("dedup-phase6-full"))
+    else {
         cancel_and_clear();
         return;
     };

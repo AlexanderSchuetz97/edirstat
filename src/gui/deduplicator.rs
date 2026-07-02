@@ -93,7 +93,11 @@ impl super::GuiApp {
 
                 if !progress_snap.item.is_empty() {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                    ui.weak(format!("{}: {}", t!("dedup-current-label"), progress_snap.item));
+                    ui.weak(format!(
+                        "{}: {}",
+                        t!("dedup-current-label"),
+                        progress_snap.item
+                    ));
                 }
             });
         } else {
@@ -135,11 +139,10 @@ impl super::GuiApp {
                         dir_counts: snapshot.dir_counts.clone(),
                     });
 
-                    self.deduplicator_progress = atomic_progress::ProgressBuilder::new_spinner(
-                        t!("dedup-phase1-size"),
-                    )
-                    .with_start_time_now()
-                    .build();
+                    self.deduplicator_progress =
+                        atomic_progress::ProgressBuilder::new_spinner(t!("dedup-phase1-size"))
+                            .with_start_time_now()
+                            .build();
 
                     *self.deduplicator_results.write() =
                         crate::stats::deduplicator::DeduplicationResults::default();

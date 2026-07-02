@@ -609,7 +609,8 @@ impl GuiApp {
                     }
 
                     if !fully_selected_groups_info.is_empty() {
-                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(16));
 
                         let time = ui.input(|i| i.time);
                         #[allow(clippy::cast_possible_truncation)]
@@ -621,54 +622,66 @@ impl GuiApp {
 
                         let frame = egui::Frame::new()
                             .fill(glow_color)
-                            .stroke(egui::Stroke::new(1.0f32, warning_red.linear_multiply(alpha * 0.4)))
+                            .stroke(egui::Stroke::new(
+                                1.0f32,
+                                warning_red.linear_multiply(alpha * 0.4),
+                            ))
                             .inner_margin(egui::Margin::symmetric(8, 4))
                             .corner_radius(4.0);
 
-                        let response = frame.show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(t!("dedup-warning-title")).strong().color(text_color));
-                                ui.separator();
-                                ui.label(
-                                    egui::RichText::new(t!(
-                                        "dedup-warning-desc",
-                                        { "count" => fully_selected_groups_info.len() }
-                                    ))
-                                    .color(ui.visuals().text_color())
-                                );
-                            });
-                        }).response;
+                        let response = frame
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(t!("dedup-warning-title"))
+                                            .strong()
+                                            .color(text_color),
+                                    );
+                                    ui.separator();
+                                    ui.label(
+                                        egui::RichText::new(t!(
+                                            "dedup-warning-desc",
+                                            { "count" => fully_selected_groups_info.len() }
+                                        ))
+                                        .color(ui.visuals().text_color()),
+                                    );
+                                });
+                            })
+                            .response;
 
                         response.on_hover_ui(|ui| {
                             ui.set_max_width(450.0);
                             ui.heading(
                                 egui::RichText::new(t!("dedup-warning-no-original"))
                                     .color(theme::WARNING_RED)
-                                    .strong()
+                                    .strong(),
                             );
                             ui.label(t!("dedup-warning-details"));
                             ui.separator();
 
-                            egui::ScrollArea::vertical().max_height(250.0).show(ui, |ui| {
-                                for (filename, nodes) in &fully_selected_groups_info {
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.colored_label(theme::WARNING_RED, "🔥");
-                                            ui.strong(filename);
-                                            ui.weak(t!(
-                                                "dedup-copies-selected",
-                                                { "count" => nodes.len() }
-                                            ));
+                            egui::ScrollArea::vertical()
+                                .max_height(250.0)
+                                .show(ui, |ui| {
+                                    for (filename, nodes) in &fully_selected_groups_info {
+                                        ui.vertical(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.colored_label(theme::WARNING_RED, "🔥");
+                                                ui.strong(filename);
+                                                ui.weak(t!(
+                                                    "dedup-copies-selected",
+                                                    { "count" => nodes.len() }
+                                                ));
+                                            });
+                                            for &idx in nodes {
+                                                let path = snapshot.get_full_path(idx);
+                                                let cleaned_path =
+                                                    crate::model::arena::clean_unc_path(&path);
+                                                ui.small(format!("  - {cleaned_path}"));
+                                            }
+                                            ui.add_space(4.0);
                                         });
-                                        for &idx in nodes {
-                                            let path = snapshot.get_full_path(idx);
-                                            let cleaned_path = crate::model::arena::clean_unc_path(&path);
-                                            ui.small(format!("  - {cleaned_path}"));
-                                        }
-                                        ui.add_space(4.0);
-                                    });
-                                }
-                            });
+                                    }
+                                });
                         });
                     }
                 }
@@ -676,7 +689,11 @@ impl GuiApp {
 
             // Right side: Active Visualizer Modes
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.selectable_value(&mut self.vis_mode, VisMode::Deduplicator, t!("vis-mode-deduplicator"));
+                ui.selectable_value(
+                    &mut self.vis_mode,
+                    VisMode::Deduplicator,
+                    t!("vis-mode-deduplicator"),
+                );
                 ui.selectable_value(&mut self.vis_mode, VisMode::Plots, t!("vis-mode-plots"));
                 ui.selectable_value(&mut self.vis_mode, VisMode::Treemap, t!("vis-mode-treemap"));
             });
