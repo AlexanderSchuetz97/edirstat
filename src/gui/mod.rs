@@ -132,6 +132,9 @@ pub struct GuiApp {
     pub(crate) pending_initial_path: Option<PathBuf>,
 
     pub(crate) highlight_duplicates: bool,
+    pub(crate) deletion_confirmation: bool,
+    pub(crate) trash_confirmation: bool,
+    pub(crate) remember_confirmation: bool,
     pub(crate) hovered_node_idx: Option<u32>,
     pub(crate) last_rendered_snapshot_ptr: usize,
     pub(crate) last_extension_stats_ptr: usize,
@@ -240,7 +243,7 @@ impl GuiApp {
             filter_case_sensitive: false,
             filter_regex: false,
             time_format: prefs.time_format.clone(),
-            last_saved_preferences: prefs,
+            last_saved_preferences: prefs.clone(),
             query_coordinator: crate::gui::explorer::QueryCoordinator::new(),
             vis_mode: VisMode::Treemap,
             plot_type: PlotType::SizeDistribution,
@@ -275,6 +278,9 @@ impl GuiApp {
             pending_initial_path,
 
             highlight_duplicates: false,
+            deletion_confirmation: prefs.deletion_confirmation,
+            trash_confirmation: prefs.trash_confirmation,
+            remember_confirmation: false,
             hovered_node_idx: None,
             last_rendered_snapshot_ptr: 0,
             last_extension_stats_ptr: 0,
@@ -716,13 +722,25 @@ impl eframe::App for GuiApp {
                 }
                 crate::gui::operations::AppCommand::ShowTrashModal(nodes) => {
                     self.delete_node_indices = nodes;
-                    self.active_modal = Some(ActiveModal::Trash);
-                    self.delete_confirm_checked = false;
+                    if self.trash_confirmation {
+                        self.active_modal = Some(ActiveModal::Trash);
+                        self.delete_confirm_checked = false;
+                        self.remember_confirmation = false;
+                    } else {
+                        self.execute_deletion(&self.delete_node_indices.clone(), true, &snapshot);
+                        self.delete_node_indices.clear();
+                    }
                 }
                 crate::gui::operations::AppCommand::ShowDeleteModal(nodes) => {
                     self.delete_node_indices = nodes;
-                    self.active_modal = Some(ActiveModal::Delete);
-                    self.delete_confirm_checked = false;
+                    if self.deletion_confirmation {
+                        self.active_modal = Some(ActiveModal::Delete);
+                        self.delete_confirm_checked = false;
+                        self.remember_confirmation = false;
+                    } else {
+                        self.execute_deletion(&self.delete_node_indices.clone(), false, &snapshot);
+                        self.delete_node_indices.clear();
+                    }
                 }
             }
         }
@@ -810,6 +828,8 @@ impl eframe::App for GuiApp {
                     });
 
                     ui.checkbox(&mut self.highlight_duplicates, t!("highlight-duplicates"));
+                    ui.checkbox(&mut self.deletion_confirmation, t!("deletion-confirmation"));
+                    ui.checkbox(&mut self.trash_confirmation, t!("trash-confirmation"));
 
                     ui.menu_button(t!("time-format"), |ui| {
                         for format in crate::model::time_utils::CommonTimeFormat::ALL {
@@ -1151,6 +1171,8 @@ impl eframe::App for GuiApp {
             monospace_paths: self.monospace_paths,
             highlight_duplicates: self.highlight_duplicates,
             time_format: self.time_format.clone(),
+            deletion_confirmation: self.deletion_confirmation,
+            trash_confirmation: self.trash_confirmation,
         };
 
         if current_prefs != self.last_saved_preferences {

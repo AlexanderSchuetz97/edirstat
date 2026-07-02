@@ -1017,7 +1017,20 @@ impl GuiApp {
                                         &mut self.delete_confirm_checked,
                                         cfg.checkbox_label,
                                     );
-                                    ui.add_space(16.0);
+                                    ui.add_space(8.0);
+
+                                    if matches!(
+                                        self.active_modal,
+                                        Some(ActiveModal::Delete | ActiveModal::Trash)
+                                    ) {
+                                        ui.checkbox(
+                                            &mut self.remember_confirmation,
+                                            t!("modal-remember-confirmation"),
+                                        );
+                                        ui.add_space(16.0);
+                                    } else {
+                                        ui.add_space(8.0);
+                                    }
 
                                     // Action Buttons
                                     ui.horizontal(|ui| {
@@ -1037,6 +1050,9 @@ impl GuiApp {
                                         if confirm_res.clicked() {
                                             match cfg.action {
                                                 DeletionAction::DeleteMultiple => {
+                                                    if self.remember_confirmation {
+                                                        self.deletion_confirmation = false;
+                                                    }
                                                     self.execute_deletion(
                                                         &self.delete_node_indices.clone(),
                                                         false,
@@ -1045,6 +1061,9 @@ impl GuiApp {
                                                     self.delete_node_indices.clear();
                                                 }
                                                 DeletionAction::TrashMultiple => {
+                                                    if self.remember_confirmation {
+                                                        self.trash_confirmation = false;
+                                                    }
                                                     self.execute_deletion(
                                                         &self.delete_node_indices.clone(),
                                                         true,

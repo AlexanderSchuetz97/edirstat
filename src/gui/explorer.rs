@@ -1343,9 +1343,19 @@ impl GuiApp {
                         !is_scanning,
                     );
                     if trash_btn.clicked() {
-                        self.active_modal = Some(ActiveModal::Trash);
-                        self.delete_confirm_checked = false;
                         self.delete_node_indices = self.table_state.selected_rows.iter().collect();
+                        if self.trash_confirmation {
+                            self.active_modal = Some(ActiveModal::Trash);
+                            self.delete_confirm_checked = false;
+                            self.remember_confirmation = false;
+                        } else {
+                            self.execute_deletion(
+                                &self.delete_node_indices.clone(),
+                                true,
+                                snapshot,
+                            );
+                            self.delete_node_indices.clear();
+                        }
                     }
                     ui.add_space(4.0);
 
@@ -1356,9 +1366,19 @@ impl GuiApp {
                         !is_scanning,
                     );
                     if delete_btn.clicked() {
-                        self.active_modal = Some(ActiveModal::Delete);
-                        self.delete_confirm_checked = false;
                         self.delete_node_indices = self.table_state.selected_rows.iter().collect();
+                        if self.deletion_confirmation {
+                            self.active_modal = Some(ActiveModal::Delete);
+                            self.delete_confirm_checked = false;
+                            self.remember_confirmation = false;
+                        } else {
+                            self.execute_deletion(
+                                &self.delete_node_indices.clone(),
+                                false,
+                                snapshot,
+                            );
+                            self.delete_node_indices.clear();
+                        }
                     }
                 });
             });
@@ -1673,9 +1693,19 @@ impl GuiApp {
                             true,
                         );
                         if trash_btn.clicked() {
-                            self.active_modal = Some(ActiveModal::Trash);
-                            self.delete_confirm_checked = false;
                             self.delete_node_indices = vec![node_idx];
+                            if self.trash_confirmation {
+                                self.active_modal = Some(ActiveModal::Trash);
+                                self.delete_confirm_checked = false;
+                                self.remember_confirmation = false;
+                            } else {
+                                self.execute_deletion(
+                                    &self.delete_node_indices.clone(),
+                                    true,
+                                    snapshot,
+                                );
+                                self.delete_node_indices.clear();
+                            }
                         }
                         ui.add_space(4.0);
 
@@ -1686,9 +1716,19 @@ impl GuiApp {
                             true,
                         );
                         if delete_btn.clicked() {
-                            self.active_modal = Some(ActiveModal::Delete);
-                            self.delete_confirm_checked = false;
                             self.delete_node_indices = vec![node_idx];
+                            if self.deletion_confirmation {
+                                self.active_modal = Some(ActiveModal::Delete);
+                                self.delete_confirm_checked = false;
+                                self.remember_confirmation = false;
+                            } else {
+                                self.execute_deletion(
+                                    &self.delete_node_indices.clone(),
+                                    false,
+                                    snapshot,
+                                );
+                                self.delete_node_indices.clear();
+                            }
                         }
                     });
                 });

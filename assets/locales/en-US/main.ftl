@@ -14,6 +14,8 @@ idle = Idle
 # View Menu Options
 monospace-paths = Monospace Paths
 highlight-duplicates = ✨ Highlight Duplicates
+deletion-confirmation = 🗑 Deletion Confirmation
+trash-confirmation = ♻ Trash Confirmation
 time-format = 🕒 Time Format
 language = 💬 Language
 layout-mode = Layout Mode:
@@ -181,6 +183,7 @@ toast-copied-names = Copied { $count ->
 }
 
 # --- Modals ---
+modal-remember-confirmation = Remember confirmation for all future files and directories
 # Confirm Deletion/Trash/Link Modals
 modal-delete-title = ⚠ PERMANENT DELETION WARNING
 modal-delete-header = ⚠ Permanent Deletion Warning!
