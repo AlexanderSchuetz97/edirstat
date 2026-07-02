@@ -156,6 +156,7 @@ pub(crate) enum Locale {
     DeDe,
     NlNl,
     FrFr,
+    PtPt,
 }
 
 impl std::fmt::Display for Locale {
@@ -166,6 +167,7 @@ impl std::fmt::Display for Locale {
             Self::DeDe => write!(f, "de-DE"),
             Self::NlNl => write!(f, "nl-NL"),
             Self::FrFr => write!(f, "fr-FR"),
+            Self::PtPt => write!(f, "pt-PT"),
         }
     }
 }
