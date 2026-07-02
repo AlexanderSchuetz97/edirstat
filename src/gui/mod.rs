@@ -153,6 +153,7 @@ pub(crate) enum Locale {
     #[default]
     EnUs,
     EsEs,
+    DeDe,
 }
 
 impl std::fmt::Display for Locale {
@@ -160,6 +161,7 @@ impl std::fmt::Display for Locale {
         match self {
             Self::EnUs => write!(f, "en-US"),
             Self::EsEs => write!(f, "es-ES"),
+            Self::DeDe => write!(f, "de-DE"),
         }
     }
 }
